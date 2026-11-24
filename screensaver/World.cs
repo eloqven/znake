@@ -78,7 +78,6 @@ namespace Znake
             foreach (Snake snake in active)
             {
                 snake.Advance(Field, night, seconds, random,
-                    point => IsOccupied(point, snake.Id),
                     point => Stamp(snake, point, night, random),
                     point => Ecology.Eat(this, snake, point));
 
@@ -126,10 +125,10 @@ namespace Znake
             Imprints[point] = new Tint(snake.Skin, snake.ImprintWeight(night)).Over(existing);
         }
 
-        public bool IsOccupied(Cell point, long exceptId)
+        public bool IsOccupied(Cell point)
         {
             foreach (Snake other in Snakes)
-                if (other.Id != exceptId && other.Body.Contains(point)) return true;
+                if (other.Body.Contains(point)) return true;
             return false;
         }
 

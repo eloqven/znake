@@ -260,6 +260,28 @@ namespace Znake
             Marshal.Copy(pixels, destination, 0, checked(size.Width * size.Height));
         }
 
+        public void DrawInvertedBorder(int[] desktop)
+        {
+            int width = size.Width;
+            int bottom = (size.Height - 1) * width;
+            for (int column = 0; column < width; column++)
+            {
+                InvertBorderPixel(desktop, column);
+                InvertBorderPixel(desktop, bottom + column);
+            }
+            for (int row = width; row < bottom; row += width)
+            {
+                InvertBorderPixel(desktop, row);
+                InvertBorderPixel(desktop, row + width - 1);
+            }
+        }
+
+        private void InvertBorderPixel(int[] desktop, int index)
+        {
+            const int Opaque = unchecked((int)0xFF000000);
+            Marshal.WriteInt32(pixels, checked(index * 4), Opaque | (~desktop[index] & 0xFFFFFF));
+        }
+
         public int RgbAt(Point point)
         {
             if (point.X < 0 || point.Y < 0 || point.X >= size.Width || point.Y >= size.Height)

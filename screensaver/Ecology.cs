@@ -128,7 +128,7 @@ namespace Znake
 
         private static bool FreeFruitCell(World world, Cell point)
         {
-            return world.Contains(point) && !world.IsOccupied(point, 0) &&
+            return world.Contains(point) && !world.IsOccupied(point) &&
                 !world.Fruits.Any(fruit => fruit.Position.Equals(point));
         }
 

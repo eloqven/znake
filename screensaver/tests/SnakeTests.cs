@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 
 namespace Znake.Tests
 {
@@ -20,7 +21,7 @@ namespace Znake.Tests
             TestRunner.Check(snake.PendingGrowth == 1, "Growth stays queued until the tail can advance");
             snake.Motion = 0.95;
             snake.Speed = 0.60;
-            snake.Advance(new ColorField(ColorGrid.Uniform(9, 7, green), null, null), 0, 0.2, random, null, null, null);
+            snake.Advance(new ColorField(ColorGrid.Uniform(9, 7, green), null, null), 0, 0.2, random, null, null);
             TestRunner.Check(snake.Body.Count == 4 && snake.PendingGrowth == 0, "Crossing realizes growth once");
 
             snake.Saving = true;
@@ -46,15 +47,15 @@ namespace Znake.Tests
                 runner.SprintCost(1) > runner.SprintCost(0) && runner.SprintRate(1) > runner.SprintRate(0),
                 "Deep night amplifies the sprint parent and its three subgenes");
             runner.SprintRemaining = 0.3;
-            runner.Advance(new ColorField(ColorGrid.Uniform(9, 7, purple), null, null), 0, 0.15, random, null, null, null);
+            runner.Advance(new ColorField(ColorGrid.Uniform(9, 7, purple), null, null), 0, 0.15, random, null, null);
             TestRunner.Check(runner.Stress > 0 && runner.SprintRemaining < 0.3 && runner.Speed > 0,
                 "Sprinting spends calm over active time and accelerates motion");
             runner.Stress = runner.Capacity(0);
             double dwell = runner.TailDwell(0);
             runner.SaturatedFor = dwell - 0.2;
-            runner.Advance(new ColorField(ColorGrid.Uniform(9, 7, purple), null, null), 0, 0.1, random, null, null, null);
+            runner.Advance(new ColorField(ColorGrid.Uniform(9, 7, purple), null, null), 0, 0.1, random, null, null);
             TestRunner.Check(runner.Body.Count == 3 && runner.SaturatedFor > 0, "Short peak dwell keeps the fading square");
-            runner.Advance(new ColorField(ColorGrid.Uniform(9, 7, purple), null, null), 0, 0.14, random, null, null, null);
+            runner.Advance(new ColorField(ColorGrid.Uniform(9, 7, purple), null, null), 0, 0.14, random, null, null);
             TestRunner.Check(runner.Body.Count == 2 && runner.Stress < runner.Capacity(0),
                 "A sustained peak costs one square and relieves stress");
 
@@ -79,6 +80,104 @@ namespace Znake.Tests
 
             LearningFollowsExposure();
             LearningCreditsTheBeneficialCrossing();
+            BodyCrossings();
+            CrossingOpacity();
+            StressStripe();
+            SandboxBorder();
+        }
+
+        private static void BodyCrossings()
+        {
+            Rgb green = Rgb.StartingGreen;
+            var world = new World(3, 3, 17, null);
+            Cell center = new Cell(1, 1);
+            Snake resident = new Snake(world.Snakes[0].Id, true, new Genome(), green,
+                new List<Cell> { center, new Cell(2, 1), new Cell(1, 2), new Cell(0, 1),
+                    new Cell(1, 0), new Cell(0, 0) }, 0);
+            resident.Motion = 0.99;
+            resident.Speed = 1;
+            world.Snakes[0] = resident;
+            world.Step(ColorGrid.Uniform(3, 3, green), 0);
+            TestRunner.Check(!resident.Body[0].Equals(center) && resident.Body.IndexOf(resident.Body[0], 1) >= 1,
+                "A surrounded resident crosses one of its own body cells");
+
+            var narrow = new World(1, 2, 31, null);
+            Cell entry = new Cell(0, 0), target = new Cell(0, 1);
+            resident = new Snake(narrow.Snakes[0].Id, true, new Genome(), green, new List<Cell> { entry }, 1);
+            resident.Motion = 0.99;
+            resident.Speed = 1;
+            var visitor = new Snake(narrow.NewId(), false, new Genome(), green, new List<Cell> { target }, 0);
+            narrow.Snakes[0] = resident;
+            narrow.Snakes.Add(visitor);
+            narrow.Step(ColorGrid.Uniform(1, 2, green), 0);
+            TestRunner.Check(resident.Body[0].Equals(target) && visitor.Body[0].Equals(target),
+                "A resident crosses a cell occupied by another snake");
+        }
+
+        private static void CrossingOpacity()
+        {
+            var world = new World(3, 1, 31, null);
+            var self = new Cell(0, 0);
+            var shared = new Cell(1, 0);
+            var single = new Cell(2, 0);
+            world.Snakes[0] = new Snake(world.Snakes[0].Id, true, new Genome(), Rgb.StartingGreen,
+                new List<Cell> { self, shared, self, single }, 0);
+            world.Snakes.Add(new Snake(world.NewId(), false, new Genome(), Rgb.FromBytes(255, 0, 0),
+                new List<Cell> { shared }, 0));
+
+            using (var image = new Bitmap(72, 24))
+            {
+                using (Graphics graphics = Graphics.FromImage(image))
+                    ScreenOverlay.DrawBodies(graphics, world, 0);
+                Color selfPixel = image.GetPixel(12, 12);
+                Color sharedPixel = image.GetPixel(36, 12);
+                TestRunner.Check(selfPixel.A > 0 && selfPixel.A < 255,
+                    "Self-crossings remain translucent");
+                TestRunner.Check(sharedPixel.A > 0 && sharedPixel.A < 255 && sharedPixel.R > 60 && sharedPixel.G > 40,
+                    "Different snakes remain visible where their bodies overlap");
+                TestRunner.Check(image.GetPixel(60, 12).A == 255,
+                    "A single segment stays fully visible");
+            }
+        }
+
+        private static void StressStripe()
+        {
+            var world = new World(1, 1, 31, null);
+            Snake snake = world.Snakes[0];
+            snake.Heading = 0;
+            using (var image = new Bitmap(24, 24))
+            using (Graphics graphics = Graphics.FromImage(image))
+            {
+                ScreenOverlay.DrawBodies(graphics, world, 0);
+                TestRunner.Check(image.GetPixel(23, 12).ToArgb() == Color.White.ToArgb() &&
+                    image.GetPixel(22, 12).ToArgb() == snake.Skin.ToColor(1).ToArgb(),
+                    "A calm heading marker is a single white pixel on the front edge");
+                snake.Stress = snake.Capacity(0) / 2;
+                ScreenOverlay.DrawBodies(graphics, world, 0);
+                Color middle = image.GetPixel(23, 12);
+                TestRunner.Check(middle.R == 128 && middle.G == 128 && middle.B == 128,
+                    "The head edge darkens with increasing stress");
+                snake.Heading = 1;
+                snake.Stress = snake.Capacity(0);
+                ScreenOverlay.DrawBodies(graphics, world, 0);
+                TestRunner.Check(image.GetPixel(12, 23).ToArgb() == Color.Black.ToArgb() &&
+                    image.GetPixel(23, 12).ToArgb() == snake.Skin.ToColor(1).ToArgb(),
+                    "A fully stressed heading marker follows the head turn");
+            }
+        }
+
+        private static void SandboxBorder()
+        {
+            using (var surface = new DibSurface(new Size(3, 3)))
+            {
+                var underlying = new[] { 0x123456, 0x19AF80, 0, 0, 0, 0, 0, 0, 0xFFFFFF };
+                surface.DrawInvertedBorder(underlying);
+                TestRunner.Check(surface.RgbAt(new Point(0, 0)) == 0xEDCBA9 &&
+                    surface.RgbAt(new Point(1, 0)) == 0xE6507F &&
+                    surface.RgbAt(new Point(2, 2)) == 0 && surface.AlphaAt(new Point(2, 2)) == 255,
+                    "Sandbox border inverts each underlying pixel");
+                TestRunner.Check(surface.AlphaAt(new Point(1, 1)) == 0, "Sandbox border is one pixel wide");
+            }
         }
 
         private static void LearningCreditsTheBeneficialCrossing()
@@ -97,15 +196,15 @@ namespace Znake.Tests
             snake.Stress = 0.221 * snake.Capacity(0);
             snake.Motion = 0.99;
             snake.Speed = 15;
-            var current = ColorGrid.Uniform(9, 7, green);
-            current[start] = hostile;
+            var current = ColorGrid.Uniform(9, 7, hostile);
+            var previous = ColorGrid.Uniform(9, 7, hostile);
+            current[first] = previous[first] = green;
+            current[steady] = previous[steady] = green;
             current[second] = Rgb.Mix(green, hostile, 0.2);
-            var previous = ColorGrid.Uniform(9, 7, green);
             previous[second] = new Rgb(0, 0, 0);
 
             snake.Advance(new ColorField(current, previous, null), 0, World.StepSeconds,
-                new SaverRandom(338), point => snake.Body[0].Equals(start) ? !point.Equals(first)
-                    : !point.Equals(second) && !point.Equals(steady), null, null);
+                new SaverRandom(338), null, null);
             TestRunner.Check(snake.Body[0].Equals(second) && snake.Mood == Affect.Calm &&
                 snake.LastMovingGene == Gene.FlickerAttraction, "A later flicker crossing follows the feeding gain");
             TestRunner.Near(snake.Learned[(int)Gene.Speed], 0.02, 1e-10,
@@ -129,21 +228,23 @@ namespace Znake.Tests
             Cell start = ambient.Body[0];
 
             ambient.Advance(new ColorField(matching, prior, null), 0, World.StepSeconds,
-                new SaverRandom(338), null, null, null);
+                new SaverRandom(338), null, null);
             TestRunner.Check(ambient.Body[0].Equals(start) && ambient.Mood == Affect.Calm,
                 "Matching light calms a stationary snake");
             TestRunner.Near(ambient.Learned[(int)Gene.FlickerAttraction], 0, 1e-10,
                 "Ambient calm does not reinforce stale movement");
 
-            var traveler = Create(genome);
+            var traveler = new Snake(1, true, genome, green,
+                new List<Cell> { new Cell(0, 0), new Cell(0, 1), new Cell(0, 2) }, 1);
+            var corridor = ColorGrid.Uniform(1, 3, green);
             traveler.Mood = Affect.Neutral;
             traveler.Stress = 0.23 * traveler.Capacity(0);
             traveler.Motion = 0.99;
             traveler.Speed = 1;
-            Cell destination = traveler.Body[0].Move(Cell.Directions[0]);
-            matching[traveler.Body[traveler.Body.Count - 1]] = hostile;
-            traveler.Advance(new ColorField(matching, null, null), 0, World.StepSeconds,
-                new SaverRandom(338), point => !point.Equals(destination), null, null);
+            Cell destination = traveler.Body[0].Move(Cell.Directions[1]);
+            corridor[traveler.Body[traveler.Body.Count - 1]] = hostile;
+            traveler.Advance(new ColorField(corridor, null, null), 0, World.StepSeconds,
+                new SaverRandom(338), null, null);
             TestRunner.Check(traveler.Body[0].Equals(destination) && traveler.Mood == Affect.Calm,
                 "Crossing out of unsuitable light calms the snake");
             TestRunner.Near(traveler.Learned[(int)Gene.Speed], 0.02, 1e-10,
@@ -154,7 +255,7 @@ namespace Znake.Tests
             var pressure = new ColorField(prior, null, null);
             var random = new SaverRandom(338);
             for (int tick = 0; tick < 24 && saturated.Body.Count == 3; tick++)
-                saturated.Advance(pressure, 0, World.StepSeconds, random, null, null, null);
+                saturated.Advance(pressure, 0, World.StepSeconds, random, null, null);
             TestRunner.Check(saturated.Body.Count == 2 && saturated.Mood == Affect.Stressed,
                 "Tail loss reduces stress without always leaving the stressed mood");
             TestRunner.Near(saturated.Learned[(int)Gene.TailRelief], 0, 1e-10,

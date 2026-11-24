@@ -30,6 +30,7 @@ namespace Znake.Tests
                     TestRunner.Check(StateStore.Open(folder) == null, "The running profile rejects a second writer");
                     var original = new World(13, 9, 662, null);
                     Snake snake = original.Snakes.Single();
+                    snake.Body[1] = snake.Body[0];
                     snake.SprintRemaining = 0.7;
                     snake.Learned[(int)Gene.Sprint] = 0.025;
                     snake.Stress = snake.Capacity(0);
@@ -49,6 +50,8 @@ namespace Znake.Tests
                     World resumed = store.Load(clock);
                     TestRunner.Check(resumed.Snakes.Any(item => item.Id == visitor.Id) &&
                         resumed.Fruits.Single().VineId == resumed.Vines.Single().Id, "Resume keeps visible visitors and fruit ownership");
+                    TestRunner.Check(resumed.Snakes[0].Body[0].Equals(resumed.Snakes[0].Body[1]),
+                        "Checkpoint resume keeps overlapping body segments");
                     TestRunner.Near(resumed.Snakes[0].SprintRemaining, 0.7, 1e-9, "Resume retains sprint time");
                     TestRunner.Near(resumed.Snakes[0].Learned[(int)Gene.Sprint], 0.025, 1e-9, "Resume retains learning");
                     TestRunner.Near(resumed.Snakes[0].SaturatedFor, snake.SaturatedFor, 1e-9,

@@ -72,7 +72,7 @@ namespace Znake
         public double ImprintWeight(double night) { return 0.015 + 0.027 * Express(Gene.Imprint, night); }
 
         public void Advance(ColorField field, double night, double seconds, SaverRandom random,
-            Func<Cell, bool> occupied, Action<Cell> crossing, Action<Cell> arrived)
+            Action<Cell> crossing, Action<Cell> arrived)
         {
             double previousRatio = Numbers.Unit(Stress / Capacity(night));
             if (SprintRemaining <= 0 && random.Next() < 1 - Math.Exp(-seconds *
@@ -82,7 +82,7 @@ namespace Znake
             double sprintTime = Math.Min(SprintRemaining, seconds);
             SprintRemaining -= sprintTime;
             MovementExposure exposure = MoveAndSample(field, night, seconds, sprintTime / seconds, previousRatio,
-                random, occupied, crossing, arrived);
+                random, crossing, arrived);
             if (!IsResident && !VisibleOn(field))
                 return;
 
@@ -228,7 +228,7 @@ namespace Znake
         }
 
         private MovementExposure MoveAndSample(ColorField field, double night, double seconds, double burstFraction,
-            double stressFraction, SaverRandom random, Func<Cell, bool> occupied, Action<Cell> crossing, Action<Cell> arrived)
+            double stressFraction, SaverRandom random, Action<Cell> crossing, Action<Cell> arrived)
         {
             var exposure = new MovementExposure();
             LightResponse? initialLight = null;
@@ -246,7 +246,7 @@ namespace Znake
                 bool choosing = !Exiting;
                 bool flickerWon = false;
                 int next = choosing
-                    ? ChooseHeading(field, night, stressFraction, random, occupied, out flickerWon) : Heading;
+                    ? ChooseHeading(field, night, stressFraction, random, out flickerWon) : Heading;
                 if (next < 0)
                     continue;
 
@@ -304,7 +304,7 @@ namespace Znake
         }
 
         private int ChooseHeading(ColorField field, double night, double stressFraction,
-            SaverRandom random, Func<Cell, bool> occupied, out bool flickerWon)
+            SaverRandom random, out bool flickerWon)
         {
             double best = Double.NegativeInfinity, bestWithoutFlicker = best;
             int selected = -1, withoutFlicker = -1;
@@ -313,7 +313,7 @@ namespace Znake
             {
                 Cell next = Body[0].Move(Cell.Directions[candidate]);
                 bool inside = field.Contains(next);
-                if ((!inside && IsResident) || ContainsBody(next) || (occupied != null && occupied(next)))
+                if (!inside && IsResident)
                     continue;
 
                 double color = inside ? Rgb.Distance(Skin, field.At(next)) : 0.46;
@@ -325,14 +325,6 @@ namespace Znake
 
             flickerWon = selected != withoutFlicker;
             return selected;
-        }
-
-        private bool ContainsBody(Cell point)
-        {
-            int solid = Body.Count - (PendingGrowth == 0 ? 1 : 0);
-            for (int index = 0; index < solid; index++)
-                if (Body[index].Equals(point)) return true;
-            return false;
         }
     }
 }

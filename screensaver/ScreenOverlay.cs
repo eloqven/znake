@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
@@ -228,21 +229,58 @@ namespace Znake
                     }
                 }
 
-                foreach (Snake snake in world.Snakes)
-                {
-                    using (var body = new SolidBrush(snake.Skin.ToColor(1)))
-                    {
-                        for (int segment = snake.Body.Count - 2; segment >= 0; segment--)
-                            if (world.Contains(snake.Body[segment]))
-                                graphics.FillRectangle(body, Tile(snake.Body[segment]));
-                    }
-                    Cell last = snake.Body[snake.Body.Count - 1];
-                    if (world.Contains(last))
-                        using (var tail = new SolidBrush(snake.Skin.ToColor(snake.TailOpacity(night))))
-                            graphics.FillRectangle(tail, Tile(last));
-                }
+                DrawBodies(graphics, world, night);
                 graphics.Flush(FlushIntention.Sync);
             }
+
+            if (cornerBounds != null)
+                paint.DrawInvertedBorder(pixels);
+        }
+
+        internal static void DrawBodies(Graphics graphics, World world, double night)
+        {
+            const double OverlapOpacity = 0.88;
+            var coverage = new Dictionary<Cell, int>();
+            foreach (Snake snake in world.Snakes)
+                foreach (Cell point in snake.Body)
+                {
+                    if (!world.Contains(point)) continue;
+                    int count;
+                    coverage.TryGetValue(point, out count);
+                    coverage[point] = count + 1;
+                }
+
+            foreach (Snake snake in world.Snakes)
+            {
+                Color solid = snake.Skin.ToColor(1);
+                double tailOpacity = snake.TailOpacity(night);
+                using (var body = new SolidBrush(solid))
+                    for (int segment = snake.Body.Count - 1; segment >= 0; segment--)
+                    {
+                        Cell point = snake.Body[segment];
+                        int layers;
+                        if (!coverage.TryGetValue(point, out layers)) continue;
+                        double alpha = segment == snake.Body.Count - 1 ? tailOpacity : 1;
+                        if (layers > 1) alpha *= OverlapOpacity / layers;
+                        body.Color = alpha == 1 ? solid : snake.Skin.ToColor(alpha);
+                        Rectangle tile = Tile(point);
+                        graphics.FillRectangle(body, tile);
+                        if (segment == 0)
+                        {
+                            int gray = (int)Math.Round(255 * (1 - Numbers.Unit(snake.Stress / snake.Capacity(night))));
+                            body.Color = Color.FromArgb((int)Math.Round(255 * alpha), gray, gray, gray);
+                            graphics.FillRectangle(body, LeadingEdge(tile, Cell.Directions[snake.Heading]));
+                        }
+                    }
+            }
+        }
+
+        private static Rectangle LeadingEdge(Rectangle tile, Cell heading)
+        {
+            if (heading.X != 0)
+                return new Rectangle(heading.X > 0 ? tile.Right - 1 : tile.Left, tile.Top, 1, tile.Height);
+
+            return new Rectangle(tile.Left, heading.Y > 0 ? tile.Bottom - 1 : tile.Top, tile.Width, 1);
         }
 
         private static Rectangle Tile(Cell cell)

@@ -1,10 +1,12 @@
 [CmdletBinding()]
 param(
     [switch]$Smoke,
-    [switch]$Test
+    [switch]$Test,
+    [switch]$Widget
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Widget -and $Test) { throw 'Use -Widget to build the trial or -Test to run the tests.' }
 $framework = if ([Environment]::Is64BitOperatingSystem) { 'Framework64' } else { 'Framework' }
 $compiler = Join-Path $env:SystemRoot "Microsoft.NET\$framework\v4.0.30319\csc.exe"
 if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) {
@@ -22,6 +24,12 @@ if ($Smoke) {
     $fileName = 'ZnakeSmoke.scr'
     $options += '/define:ZNAKE_SMOKE'
     $sources += Join-Path $PSScriptRoot 'tests\SmokeTrace.cs'
+}
+
+if ($Widget) {
+    $fileName = if ($Smoke) { 'ZnakeWidgetSmoke.exe' } else { 'ZnakeWidget.exe' }
+    $options += '/main:Znake.Widget'
+    $sources += Join-Path $PSScriptRoot 'widget\Widget.cs'
 }
 
 if ($Test) {

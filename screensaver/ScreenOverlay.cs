@@ -31,23 +31,27 @@ namespace Znake
         private double pendingTime = World.StepSeconds;
         private long lastSavedTick;
         private readonly bool monitorInput;
+        private readonly Func<Rectangle> cornerBounds;
 #if ZNAKE_SMOKE
-        private readonly Rectangle? smokeBounds;
         private Rectangle previousHead;
         private int previousSkin;
 #endif
 
-        public ScreenOverlay(StateStore store, SaverSettings settings, World world)
+        public ScreenOverlay(StateStore store, SaverSettings settings, World world, Func<Rectangle> cornerBounds = null)
         {
             this.store = store;
             this.settings = settings;
             this.world = world;
+            this.cornerBounds = cornerBounds;
 #if ZNAKE_SMOKE
-            smokeBounds = SmokeTrace.ReadBounds();
-            monitorInput = !smokeBounds.HasValue;
-#else
-            monitorInput = true;
+            if (cornerBounds == null)
+            {
+                Rectangle? smokeBounds = SmokeTrace.ReadBounds();
+                if (smokeBounds.HasValue)
+                    this.cornerBounds = () => smokeBounds.Value;
+            }
 #endif
+            monitorInput = this.cornerBounds == null;
             lastSavedTick = world == null ? 0 : world.Ticks;
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -67,10 +71,8 @@ namespace Znake
                 CreateParams parameters = base.CreateParams;
                 const int ToolWindow = 0x00000080;
                 parameters.ExStyle |= WindowsDesktop.LayeredWindowStyle | ToolWindow;
-#if ZNAKE_SMOKE
                 if (!monitorInput)
                     parameters.ExStyle |= 0x08000000 | 0x00000020; // WS_EX_NOACTIVATE and WS_EX_TRANSPARENT
-#endif
                 return parameters;
             }
         }
@@ -105,11 +107,7 @@ namespace Znake
         private Rectangle FrameBounds()
         {
             Rectangle bounds = WindowsDesktop.DisplayBounds;
-#if ZNAKE_SMOKE
-            if (smokeBounds.HasValue)
-                return Rectangle.Intersect(bounds, smokeBounds.Value);
-#endif
-            return bounds;
+            return cornerBounds == null ? bounds : Rectangle.Intersect(bounds, cornerBounds());
         }
 
         private bool PointerMoved()
@@ -257,12 +255,12 @@ namespace Znake
         {
             Snake resident = world.Snakes.Find(snake => snake.IsResident);
             Rectangle primary = Screen.PrimaryScreen.Bounds;
-            Point marker = smokeBounds.HasValue ? new Point(display.Width - 34, 24) :
+            Point marker = !monitorInput ? new Point(display.Width - 34, 24) :
                 new Point(primary.Left - display.Left + primary.Width / 2 + 132,
                     primary.Top - display.Top + primary.Height / 2);
             Rectangle nextHead = Tile(resident.Body[0]);
             SmokeTrace.Frame(Handle, display, capture, paint, previousHead, previousSkin, nextHead, marker,
-                smokeBounds.HasValue);
+                !monitorInput);
             previousHead = nextHead;
             previousSkin = resident.Skin.ToColor(1).ToArgb() & 0xFFFFFF;
         }

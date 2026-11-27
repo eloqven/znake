@@ -82,6 +82,8 @@ if ($ControlPanel) {
     $fileName = 'ZnakeControlPanel.exe'
     $options += '/target:winexe', '/main:Znake.ControlPanel.Program'
     $options += $wpfRefs
+    $sources += Join-Path $PSScriptRoot 'tools\HeadlessShow.cs'
+    $sources += Join-Path $PSScriptRoot 'tools\ShowReplay.cs'
     $sources += @(Get-ChildItem -LiteralPath $controlPanelDir -Filter '*.cs' -File | ForEach-Object FullName)
 }
 

@@ -41,24 +41,24 @@ namespace Znake.ControlPanel
         {
             labelA = label ?? "Run A";
             seriesA = HistoryStore.ReadSeries(folder);
-            Refresh();
+            RedrawCharts();
         }
 
         public void SetRunB(string folder, string label)
         {
             labelB = label ?? "Run B";
             seriesB = HistoryStore.ReadSeries(folder);
-            Refresh();
+            RedrawCharts();
         }
 
         public void ClearAll()
         {
             seriesA = new List<SeriesEntry>();
             seriesB = new List<SeriesEntry>();
-            Refresh();
+            RedrawCharts();
         }
 
-        public new void Refresh()
+        public void RedrawCharts()
         {
             populationChart.SetData(
                 ExtractSeries(seriesA, s => s.GameSeconds, s => s.Population),

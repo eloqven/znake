@@ -148,22 +148,16 @@ namespace Znake.ControlPanel
             {
                 ShowStep(2);
                 renderStep.SetSourceFolder(runStep.OutputFolder);
-            };
-
-            runStep.OutputFolderReady += delegate(object s, string folder)
-            {
-                toastShownForCurrentRun = false;
-            };
-
-            runStep.Machine.GetType(); // suppress unused warning — accessed via event chain
-
-            runStep.ProceedToRender += delegate(object s2, EventArgs e2)
-            {
                 if (!toastShownForCurrentRun)
                 {
                     toastShownForCurrentRun = true;
                     ToastComplete();
                 }
+            };
+
+            runStep.OutputFolderReady += delegate(object s, string folder)
+            {
+                toastShownForCurrentRun = false;
             };
 
             renderStep.RenderComplete += delegate(object s, EventArgs e)

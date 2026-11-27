@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -9,10 +10,10 @@ using System.Linq;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
-using System.Diagnostics;
 
 namespace Znake.Replay
 {
+#pragma warning disable 0649
     [DataContract]
     internal sealed class Record
     {
@@ -35,6 +36,7 @@ namespace Znake.Replay
         [DataMember(Name = "background")] public string Background;
         [DataMember(Name = "notes")] public string Notes;
         [DataMember(Name = "visibleSeconds")] public double VisibleSeconds;
+        [DataMember(Name = "night")] public double Night;
         [DataMember(Name = "tick")] public long Tick;
         [DataMember(Name = "moves")] public long Moves;
         [DataMember(Name = "population")] public int Population;
@@ -53,6 +55,7 @@ namespace Znake.Replay
         [DataMember(Name = "resident")] public bool Resident;
         [DataMember(Name = "entering")] public bool Entering;
         [DataMember(Name = "heading")] public int Heading;
+        [DataMember(Name = "visionRadius")] public double VisionRadius;
         [DataMember(Name = "red")] public int Red;
         [DataMember(Name = "green")] public int Green;
         [DataMember(Name = "blue")] public int Blue;
@@ -77,30 +80,48 @@ namespace Znake.Replay
         [DataMember(Name = "width")] public int Width;
         [DataMember(Name = "height")] public int Height;
     }
+#pragma warning restore 0649
 
     internal static class Program
     {
         private static int Main(string[] args)
         {
+            return Run(args);
+        }
+
+        internal static int Run(string[] args)
+        {
             string log = null, output = null, frames = null, backgroundOverride = null;
-            double hold = 1.0;
-            int fps = 30;
-            bool keepFrames = false;
-            for (int index = 0; index < args.Length; index++)
+            string encoder = "auto";
+            double hold = 1.0, fps = 12.5, speed = 1.0;
+            bool keepFrames = false, visionOverlay = false;
+
+            try
             {
-                switch (args[index])
+                for (int index = 0; index < args.Length; index++)
                 {
-                    case "--log": log = Next(args, ref index); break;
-                    case "--out": output = Next(args, ref index); break;
-                    case "--frames": frames = Next(args, ref index); break;
-                    case "--background": backgroundOverride = Next(args, ref index); break;
-                    case "--hold": hold = Double.Parse(Next(args, ref index), CultureInfo.InvariantCulture); break;
-                    case "--fps": fps = Int32.Parse(Next(args, ref index), CultureInfo.InvariantCulture); break;
-                    case "--keep-frames": keepFrames = true; break;
-                    default:
-                        Console.Error.WriteLine("Unknown argument: " + args[index]);
-                        return 2;
+                    switch (args[index])
+                    {
+                        case "--log": log = Next(args, ref index); break;
+                        case "--out": output = Next(args, ref index); break;
+                        case "--frames": frames = Next(args, ref index); break;
+                        case "--background": backgroundOverride = Next(args, ref index); break;
+                        case "--hold": hold = Double.Parse(Next(args, ref index), CultureInfo.InvariantCulture); break;
+                        case "--fps": fps = Double.Parse(Next(args, ref index), CultureInfo.InvariantCulture); break;
+                        case "--speed": speed = Double.Parse(Next(args, ref index), CultureInfo.InvariantCulture); break;
+                        case "--encoder": encoder = Next(args, ref index).ToLowerInvariant(); break;
+                        case "--vision": visionOverlay = true; break;
+                        case "--keep-frames": keepFrames = true; break;
+                        default:
+                            Console.Error.WriteLine("Unknown argument: " + args[index]);
+                            return 2;
+                    }
                 }
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error.Message);
+                return 2;
             }
 
             if (log == null)
@@ -114,7 +135,8 @@ namespace Znake.Replay
                 return 1;
             }
             if (hold <= 0) hold = 1;
-            if (fps <= 0) fps = 30;
+            if (fps <= 0) fps = 12.5;
+            if (speed <= 0) speed = 1.0;
 
             string folder = Path.GetDirectoryName(Path.GetFullPath(log));
             if (frames == null) frames = Path.Combine(folder, "replay-frames");
@@ -138,13 +160,16 @@ namespace Znake.Replay
                 return 1;
             }
 
+            double effectiveHold = ComputeHold(hold, speed);
             string backgroundPath = backgroundOverride != null
                 ? (backgroundOverride == "none" ? null : backgroundOverride)
                 : (start.Background == null ? null : Path.Combine(folder, start.Background));
             using (Bitmap background = LoadBackground(backgroundPath, start))
             {
                 Console.WriteLine("show " + start.Show + " seed " + start.Seed + " cast " + start.Cast +
-                    " target " + start.Target + " scenes " + scenes.Count);
+                    " target " + start.Target + " scenes " + scenes.Count +
+                    " fps " + fps.ToString("0.###", CultureInfo.InvariantCulture) +
+                    " speed " + speed.ToString("0.###", CultureInfo.InvariantCulture) + "x");
                 for (int index = 0; index < scenes.Count; index++)
                 {
                     string path = Path.Combine(frames, "frame-" + index.ToString("D6", CultureInfo.InvariantCulture) + ".png");
@@ -154,7 +179,7 @@ namespace Znake.Replay
                         graphics.CompositingMode = CompositingMode.SourceCopy;
                         graphics.DrawImageUnscaled(background, 0, 0);
                         graphics.CompositingMode = CompositingMode.SourceOver;
-                        DrawScene(graphics, start, scenes[index]);
+                        DrawScene(graphics, start, scenes[index], visionOverlay);
                         frame.Save(path, ImageFormat.Png);
                     }
                     if (index % 100 == 0 || index == scenes.Count - 1)
@@ -168,7 +193,7 @@ namespace Znake.Replay
                     for (int index = 0; index < scenes.Count; index++)
                     {
                         writer.WriteLine("file '" + Path.Combine(frames, "frame-" + index.ToString("D6", CultureInfo.InvariantCulture) + ".png").Replace("'", "'\\''") + "'");
-                        writer.WriteLine("duration " + hold.ToString("0.###", CultureInfo.InvariantCulture));
+                        writer.WriteLine("duration " + effectiveHold.ToString("0.######", CultureInfo.InvariantCulture));
                     }
                     writer.WriteLine("file '" + Path.Combine(frames, "frame-" + (scenes.Count - 1).ToString("D6", CultureInfo.InvariantCulture) + ".png").Replace("'", "'\\''") + "'");
                 }
@@ -179,19 +204,17 @@ namespace Znake.Replay
                     Console.WriteLine("Frames written to " + frames + "; ffmpeg was not found, so no mp4 was encoded.");
                     return 0;
                 }
-                string arguments = "-y -f concat -safe 0 -i \"" + list + "\" -vf \"fps=" + fps +
-                    ",format=yuv420p\" -c:v libx264 -preset medium -crf 18 -movflags +faststart \"" + output + "\"";
-                var info = new ProcessStartInfo(ffmpeg, arguments)
+
+                string selectedCodec = SelectCodec(ffmpeg, encoder);
+                Console.WriteLine("encoding with " + selectedCodec);
+                int encodeExit = RunFfmpegEncode(ffmpeg, list, fps, selectedCodec, output);
+                if (encodeExit != 0 && selectedCodec != "libx264")
                 {
-                    UseShellExecute = false,
-                    RedirectStandardOutput = false,
-                    RedirectStandardError = false
-                };
-                using (Process process = Process.Start(info))
-                {
-                    process.WaitForExit();
-                    if (process.ExitCode != 0) return process.ExitCode;
+                    Console.WriteLine("GPU encoder " + selectedCodec + " failed (exit " + encodeExit + "); falling back to libx264.");
+                    encodeExit = RunFfmpegEncode(ffmpeg, list, fps, "libx264", output);
                 }
+                if (encodeExit != 0) return encodeExit;
+
                 Console.WriteLine("wrote " + output);
                 if (!keepFrames)
                 {
@@ -201,6 +224,111 @@ namespace Znake.Replay
                 }
             }
             return 0;
+        }
+
+        internal static double ComputeHold(double hold, double speed)
+        {
+            return hold / Math.Max(1e-6, speed);
+        }
+
+        internal static string FormatFilter(double fps)
+        {
+            return "fps=" + fps.ToString("0.###", CultureInfo.InvariantCulture) + ",format=yuv420p";
+        }
+
+        internal static string[] BuildEncoderArgs(string codec)
+        {
+            if (codec == "h264_nvenc")
+                return new[] { "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19" };
+            if (codec == "h264_amf")
+                return new[] { "-c:v", "h264_amf", "-quality", "balanced" };
+            if (codec == "h264_qsv")
+                return new[] { "-c:v", "h264_qsv", "-preset", "medium" };
+            return new[] { "-c:v", "libx264", "-preset", "medium", "-crf", "18" };
+        }
+
+        private static string SelectCodec(string ffmpeg, string requested)
+        {
+            if (requested == "cpu" || requested == "libx264") return "libx264";
+            string encodersOutput = QueryEncoders(ffmpeg);
+            string[] candidates;
+            if (requested == "nvenc") candidates = new[] { "h264_nvenc" };
+            else if (requested == "amf") candidates = new[] { "h264_amf" };
+            else if (requested == "qsv") candidates = new[] { "h264_qsv" };
+            else candidates = new[] { "h264_nvenc", "h264_amf", "h264_qsv" };
+
+            foreach (string candidate in candidates)
+            {
+                if (encodersOutput.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    ProbeEncoder(ffmpeg, candidate))
+                    return candidate;
+            }
+            return "libx264";
+        }
+
+        private static string QueryEncoders(string ffmpeg)
+        {
+            try
+            {
+                var info = new ProcessStartInfo(ffmpeg, "-hide_banner -encoders")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                using (Process proc = Process.Start(info))
+                {
+                    string text = proc.StandardOutput.ReadToEnd();
+                    proc.WaitForExit(3000);
+                    return text ?? "";
+                }
+            }
+            catch (Exception) { return ""; }
+        }
+
+        private static bool ProbeEncoder(string ffmpeg, string codec)
+        {
+            try
+            {
+                var info = new ProcessStartInfo(ffmpeg,
+                    "-hide_banner -y -f lavfi -i color=c=black:s=128x128:d=0.08 -frames:v 1 -pix_fmt yuv420p -c:v " +
+                    codec + " -f null -")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                using (Process proc = Process.Start(info))
+                {
+                    proc.StandardError.ReadToEnd();
+                    if (!proc.WaitForExit(5000))
+                    {
+                        try { proc.Kill(); } catch (Exception) { }
+                        return false;
+                    }
+                    return proc.ExitCode == 0;
+                }
+            }
+            catch (Exception) { return false; }
+        }
+
+        private static int RunFfmpegEncode(string ffmpeg, string list, double fps, string codec, string output)
+        {
+            string encoderArgs = String.Join(" ", BuildEncoderArgs(codec));
+            string arguments = "-y -f concat -safe 0 -i \"" + list + "\" -vf \"" + FormatFilter(fps) +
+                "\" " + encoderArgs + " -movflags +faststart \"" + output + "\"";
+            var info = new ProcessStartInfo(ffmpeg, arguments)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using (Process process = Process.Start(info))
+            {
+                process.WaitForExit();
+                return process.ExitCode;
+            }
         }
 
         private static string Next(string[] args, ref int index)
@@ -256,12 +384,15 @@ namespace Znake.Replay
             return background;
         }
 
-        private static void DrawScene(Graphics graphics, Record start, Record scene)
+        internal static void DrawScene(Graphics graphics, Record start, Record scene, bool visionOverlay = false)
         {
             int square = start.Square > 0 ? start.Square : 24;
             int offsetX = start.GridOffsetX;
             int offsetY = start.GridOffsetY;
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            if (visionOverlay)
+                DrawVisionOverlay(graphics, start, scene, offsetX, offsetY, square);
 
             if (scene.Vines != null)
                 foreach (Mark mark in scene.Vines)
@@ -310,6 +441,35 @@ namespace Znake.Replay
                 }
 
             DrawHud(graphics, start, scene, square);
+        }
+
+        private static void DrawVisionOverlay(Graphics graphics, Record start, Record scene, int offsetX, int offsetY, int square)
+        {
+            if (scene.Bodies == null || scene.Bodies.Count == 0) return;
+            GraphicsState saved = graphics.Save();
+            try
+            {
+                if (start.Width > 0 && start.Height > 0)
+                    graphics.SetClip(new Rectangle(offsetX, offsetY, start.Width * square, start.Height * square));
+                foreach (Body body in scene.Bodies)
+                {
+                    if (body.Points == null || body.Points.Count == 0 || body.VisionRadius <= 0) continue;
+                    Mark head = body.Points[0];
+                    float radius = (float)(Math.Min(100.0, body.VisionRadius) * square);
+                    float cx = offsetX + (head.X + 0.5f) * square;
+                    float cy = offsetY + (head.Y + 0.5f) * square;
+                    var bounds = new RectangleF(cx - radius, cy - radius, radius * 2, radius * 2);
+                    int r = Clamp(body.Red), g = Clamp(body.Green), b = Clamp(body.Blue);
+                    using (var fill = new SolidBrush(Color.FromArgb(24, r, g, b)))
+                        graphics.FillEllipse(fill, bounds);
+                    using (var ring = new Pen(Color.FromArgb(78, r, g, b), 1.25f))
+                        graphics.DrawEllipse(ring, bounds);
+                }
+            }
+            finally
+            {
+                graphics.Restore(saved);
+            }
         }
 
         private static void DrawEyes(Graphics graphics, Body body, int offsetX, int offsetY, int square)
@@ -388,7 +548,7 @@ namespace Znake.Replay
                 color.B + (int)((255 - color.B) * amount));
         }
 
-        private static string FindFfmpeg()
+        internal static string FindFfmpeg()
         {
             string path = Environment.GetEnvironmentVariable("PATH");
             if (path != null)

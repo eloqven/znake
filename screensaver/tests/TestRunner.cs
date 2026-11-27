@@ -19,6 +19,7 @@ namespace Znake.Tests
                 ShowTests.Run();
                 CalibrationTests.Run();
                 HeadlessControlTests.Run();
+                ReplayOverlayTests.Run();
                 Console.WriteLine("PASS {0} deterministic screensaver checks", tests);
                 return 0;
             }

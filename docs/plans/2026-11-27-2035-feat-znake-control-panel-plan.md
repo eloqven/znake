@@ -193,6 +193,9 @@ None. The planning-time questions carried from the brainstorm are resolved as KT
 - KTD7. Live-grid GPU rendering sits behind a renderer interface with a GDI+ default path and is sequenced last. (session-settled: user-approved — chosen over deferring live-grid GPU: the operator confirmed both paths in v1.) Governs R35 and the GPU Key Decision.
 - KTD8. Dry run delegates to a runner `--validate-only` mode instead of duplicating validation in the panel. Governs R30.
 - KTD9. A same-minute folder-name collision gets a numeric suffix rather than overwriting the earlier run. Governs R6.
+- KTD10. Completion banner uses a 5-second auto-advance countdown; **Stay on Run** cancels the countdown while remaining in `completed-extinction` or `completed-time-limit` with manual **Proceed to Render**, **Resume** (when stopped or time-limited), and **New Run** actions. (session-settled: user-approved — chosen over returning to idle: keeps the post-run summary and manual render/resume actions accessible.) Governs R10a, R13.
+- KTD11. Stopping via `--stop-file` or `Ctrl+C` keeps `world.ShowComplete = false`, writes a well-formed trailing `snapshot` to `show.log.jsonl`, saves `world.json`, and records `status: "stopped"` in `progress.json` + `series.jsonl`; `StateStore.Valid` allows `0` or `1` residents when `ShowActive && ShowNoRespawn` is true, and `--resume` uses strict `world.json` validation without falling back to `world.previous.json`. (session-settled: user-approved — chosen over marking `ShowComplete = true` on stop: preserves `--resume` continuation and catches invalid manual checkpoint edits.) Governs R9, R19, R34.
+- KTD12. GPU live-grid rendering (`U8`) uses built-in .NET Framework WPF `ElementHost` + `DrawingVisual` (`RenderCapability.Tier >> 16 >= 2`) with `GdiGridRenderer` as the correctness reference and fallback; `ShowReplay.exe` probes `h264_nvenc`, `h264_amf`, `h264_qsv` via 1-frame ffmpeg test with `libx264` fallback. (session-settled: user-approved — chosen over raw Direct2D/D3D11 COM P/Invoke: avoids brittle vtable bindings under C# 5 `csc.exe` with zero external packages.) Governs R35.
 
 ### High-Level Technical Design
 
@@ -219,8 +222,8 @@ stateDiagram-v2
   running --> completed_extinction: population zero
   running --> completed_time_limit: duration reached
   running --> failed: runner error
-  completed_extinction --> render: countdown or Continue
-  completed_time_limit --> render: countdown or Continue
+  completed_extinction --> render: 5s countdown or Proceed to Render
+  completed_time_limit --> render: 5s countdown or Proceed to Render
   stopped --> idle: New run
   failed --> idle: New run
 ```
@@ -238,11 +241,11 @@ flowchart LR
   C --> M[ffmpeg at chosen fps]
 ```
 
-### Deferred Implementation Details
+### Resolved Implementation Details
 
-- Exact GPU adapter library and encoder-name detection; resolve during U2 and U8 with a CPU fallback as the stable path.
-- Exact byte offsets and record shape for `series.jsonl`; keep it append-only and small.
-- Whether `render.json` is written by the panel or the renderer; the panel is the default owner.
+- **GPU selection (`U2`, `U8`):** `ShowReplay.exe` probes `h264_nvenc`, `h264_amf`, `h264_qsv` (plus `--encoder <auto|cpu|nvenc|amf|qsv>`) with `libx264` fallback; `GpuGridRenderer` uses WPF `ElementHost` + `DrawingVisual` when `RenderCapability.Tier >> 16 >= 2` with `GdiGridRenderer` fallback (KTD12).
+- **`series.jsonl` schema (`U1`):** Append-only JSONL rows at each progress interval and terminal exit with `utc`, `gameSeconds`, `wallSeconds`, `steps`, `moves`, `population`, `originalAlive`, and `savedSnakeAlive`.
+- **Panel data & `render.json` ownership (`U4`, `U7`):** Panel-owned `settings.json`, `presets.json`, and `history.json` live under `%LOCALAPPDATA%\Znake\ControlPanel\`; `RenderStep` writes `render.json` into the run folder after `ShowReplay.exe` completes.
 
 ### Sources / Research
 

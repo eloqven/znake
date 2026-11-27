@@ -5,6 +5,9 @@ using System.Runtime.Serialization;
 
 namespace Znake
 {
+    [Flags]
+    internal enum ColorChannels { None = 0, Red = 1, Green = 2, Blue = 4, All = Red | Green | Blue }
+
     [DataContract]
     internal struct Cell : IEquatable<Cell>
     {
@@ -39,6 +42,13 @@ namespace Znake
         {
             return new Rgb(from.R + (toward.R - from.R) * amount,
                 from.G + (toward.G - from.G) * amount, from.B + (toward.B - from.B) * amount);
+        }
+
+        public Rgb SensitiveChannels(Rgb reference, ColorChannels channels)
+        {
+            return new Rgb((channels & ColorChannels.Red) != 0 ? R : reference.R,
+                (channels & ColorChannels.Green) != 0 ? G : reference.G,
+                (channels & ColorChannels.Blue) != 0 ? B : reference.B);
         }
 
         public bool IsValid()
@@ -123,15 +133,18 @@ namespace Znake
             return grid;
         }
 
-        public static ColorGrid Sample(int[] pixels, Size area, int square)
+        public static ColorGrid Sample(int[] pixels, Size area, int square, Point offset = default(Point))
         {
-            var grid = new ColorGrid((area.Width + square - 1) / square, (area.Height + square - 1) / square);
+            var grid = new ColorGrid((area.Width - offset.X + square - 1) / square,
+                (area.Height - offset.Y + square - 1) / square);
             for (int row = 0; row < grid.Height; row++)
             {
                 for (int column = 0; column < grid.Width; column++)
                 {
-                    int x = column * square, y = row * square;
+                    int x = column * square + offset.X, y = row * square + offset.Y;
                     int endX = Math.Min(x + square, area.Width), endY = Math.Min(y + square, area.Height);
+                    x = Math.Max(0, x);
+                    y = Math.Max(0, y);
                     int red = 0, green = 0, blue = 0;
                     for (int scan = y; scan < endY; scan++)
                     {
@@ -207,10 +220,10 @@ namespace Znake
             return average;
         }
 
-        public double Flicker(Cell point)
+        public double Flicker(Cell point, ColorChannels channels = ColorChannels.All)
         {
             return previous != null && previous.Contains(point)
-                ? Rgb.Distance(previous[point], raw[point]) : 0;
+                ? Rgb.Distance(previous[point].SensitiveChannels(raw[point], channels), raw[point]) : 0;
         }
     }
 

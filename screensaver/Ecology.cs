@@ -35,6 +35,7 @@ namespace Znake
         [DataMember] public List<VineSquare> Squares = new List<VineSquare>();
         [DataMember] public Rgb FruitColor;
         [DataMember] public double NextFruitIn;
+        [DataMember(EmitDefaultValue = false)] public bool Inactive;
 
         public Vine(long id, Genome genes, Rgb color)
         {
@@ -56,6 +57,7 @@ namespace Znake
         [DataMember] public Rgb Tone;
         [DataMember] public Genome Genes;
         [DataMember] public double Remaining;
+        [DataMember(EmitDefaultValue = false)] public bool Antifruit;
 
         public Fruit(long id, Vine vine, Cell point, double remaining)
         {
@@ -66,6 +68,16 @@ namespace Znake
             Genes = vine.Genes.Copy();
             Remaining = remaining;
         }
+
+        public Fruit(long id, Snake maker, Cell point, double remaining)
+        {
+            Id = id;
+            Position = point;
+            Tone = new Rgb(1 - maker.Skin.R, 1 - maker.Skin.G, 1 - maker.Skin.B);
+            Genes = maker.Genes.Copy();
+            Remaining = remaining;
+            Antifruit = true;
+        }
     }
 
     internal static class Ecology
@@ -75,26 +87,57 @@ namespace Znake
 
         public static double LifeInfluence(Genome genome, double night)
         {
-            return 0.015 + 0.027 * genome.Express(Gene.Imprint, 0, night);
+            return Numbers.Unit(0.015 + 0.027 * genome.Express(Gene.Imprint, 0, night));
         }
 
         public static void TintField(World world, ColorField field, double night)
         {
             foreach (Vine vine in world.Vines)
+            {
+                if (world.WidgetSquare != 0 && !IsActive(vine)) continue;
                 foreach (VineSquare square in vine.Squares)
                     field.Add(square.Position, square.ColorTrace(), false);
+            }
             foreach (Fruit fruit in world.Fruits)
                 field.Add(fruit.Position, new Tint(fruit.Tone, LifeInfluence(fruit.Genes, night)), false);
         }
 
-        public static void Eat(World world, Snake snake, Cell point)
+        public static bool IsActive(Vine vine)
+        {
+            if (vine.Inactive || vine.Squares.Count < 2) return false;
+            var cells = new HashSet<Cell>(vine.Squares.Select(square => square.Position));
+            return cells.Any(point => Cell.Directions.Any(direction => cells.Contains(point.Move(direction))));
+        }
+
+        public static bool Eat(World world, Snake snake, Cell point, double night = 0)
         {
             int index = world.Fruits.FindIndex(fruit => fruit.Position.Equals(point));
-            if (index < 0) return;
+            if (index < 0) return false;
             Fruit meal = world.Fruits[index];
             world.Fruits.RemoveAt(index);
-            snake.Energy += 1;
-            snake.Genes.BlendFrom(meal.Genes, 0.14);
+            snake.Energy = Math.Max(0, Numbers.Finite(snake.Energy + (meal.Antifruit ? -1 : 1)));
+            if (world.WidgetSquare != 0)
+            {
+                snake.Stress = meal.Antifruit ? Math.Min(snake.Capacity(night), snake.Stress + 1) :
+                    Math.Max(0, snake.Stress - 1);
+                snake.LastFruitTick = world.Ticks;
+                snake.LastFruitWasAnti = meal.Antifruit;
+                snake.ApplyFruitTimer(night, meal.Antifruit);
+            }
+            snake.AbsorbFruit(meal.Genes, night, meal.Antifruit);
+            return true;
+        }
+
+        internal static void DropAntifruit(World world, Snake maker, double night)
+        {
+            Cell head = maker.Body[0];
+            Cell rear = head.Move(Cell.Directions[(maker.Heading + 2) % Cell.Directions.Length]);
+            Func<Cell, bool> available = cell => world.Contains(cell) &&
+                !world.Fruits.Any(fruit => fruit.Position.Equals(cell));
+            Cell? point = available(rear) ? (Cell?)rear : FreeNeighbor(head, available);
+            if (point.HasValue)
+                world.Fruits.Add(new Fruit(world.NewId(), maker, point.Value,
+                    62 + 24 * maker.EffectiveGene(Gene.StressCapacity, night)));
         }
 
         public static void Advance(World world, double seconds, double night)
@@ -104,11 +147,17 @@ namespace Znake
 
             foreach (Vine vine in world.Vines)
             {
+                bool active = world.WidgetSquare == 0 || IsActive(vine);
                 int fruits = world.Fruits.Count(fruit => fruit.VineId == vine.Id);
-                double decay = DecayRate(vine.Genes, night, fruits) * seconds;
+                double decay = (active ? DecayRate(vine.Genes, night, fruits) : 0.05) * seconds;
                 foreach (VineSquare square in vine.Squares)
                     square.Nutrients = Math.Max(0, square.Nutrients - square.Peak * decay);
                 vine.Squares.RemoveAll(square => square.Nutrients <= MinimumSquareNutrients);
+                if (world.WidgetSquare != 0 && !IsActive(vine))
+                {
+                    vine.Inactive = true;
+                    continue;
+                }
 
                 vine.NextFruitIn = Math.Max(0, vine.NextFruitIn - seconds);
                 if (vine.NextFruitIn == 0)
@@ -163,10 +212,12 @@ namespace Znake
         public static void Decompose(World world, Snake donor, Cell death, double night)
         {
             Vine vine = world.Vines.Where(existing =>
-                existing.Squares.Any(square => square.Position.Equals(death)) ||
-                world.Fruits.Any(fruit => fruit.VineId == existing.Id && fruit.Position.Equals(death)))
+                (world.WidgetSquare == 0 || IsActive(existing)) &&
+                (existing.Squares.Any(square => square.Position.Equals(death)) ||
+                world.Fruits.Any(fruit => fruit.VineId == existing.Id && fruit.Position.Equals(death))))
                 .OrderBy(existing => existing.Id).FirstOrDefault();
-            var path = donor.RecentPath.Where(world.Contains).Distinct().ToList();
+            var path = world.WidgetSquare != 0 ? DeathFootprint(world, donor, death) :
+                donor.RecentPath.Where(world.Contains).Distinct().ToList();
             if (!path.Contains(death)) path.Add(death);
 
             double nutrients = 0.8 * donor.LargestLength + Math.Min(donor.Energy, donor.LargestLength);
@@ -201,6 +252,15 @@ namespace Znake
                     square.Peak += portion;
                 }
             }
+        }
+
+        private static List<Cell> DeathFootprint(World world, Snake donor, Cell death)
+        {
+            var footprint = new List<Cell> { death };
+            Cell behind = death.Move(Cell.Directions[(donor.Heading + 2) % Cell.Directions.Length]);
+            Cell? tail = world.Contains(behind) ? (Cell?)behind : FreeNeighbor(death, world.Contains);
+            if (tail.HasValue) footprint.Add(tail.Value);
+            return footprint;
         }
 
         private static Cell? FreeNeighbor(Cell origin, Func<Cell, bool> available)

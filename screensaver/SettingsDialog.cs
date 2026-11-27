@@ -9,6 +9,8 @@ namespace Znake
     internal sealed class SettingsDialog : Form
     {
         private readonly string root;
+        private bool browserSkin;
+        private double? timeScale;
         private readonly CheckBox debug = new CheckBox { Text = "Show debug colors", AutoSize = true };
         private readonly TextBox latitude = new TextBox { Width = 85 };
         private readonly TextBox longitude = new TextBox { Width = 85 };
@@ -61,7 +63,7 @@ namespace Znake
             genes.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Override", FillWeight = 50, SortMode = DataGridViewColumnSortMode.NotSortable });
             var help = new Label
             {
-                Text = "Leave an override blank to roll it. Use 0 to 1, or −1 to 1 for LearningOffset.",
+                Text = "Enter finite gene values, or leave an entry blank to use its default.",
                 AutoSize = true,
                 Margin = new Padding(3, 10, 3, 5)
             };
@@ -87,6 +89,8 @@ namespace Znake
             catch (InvalidDataException error) { settings = new SaverSettings(); status.Text = error.Message; }
             catch (UnauthorizedAccessException error) { settings = new SaverSettings(); status.Text = error.Message; }
             debug.Checked = settings.Debug;
+            browserSkin = settings.BrowserSkin;
+            timeScale = settings.TimeScale;
             latitude.Text = Present(settings.Latitude);
             longitude.Text = Present(settings.Longitude);
             var overrides = settings.BirthOverrides();
@@ -106,7 +110,7 @@ namespace Znake
         private void TrySave()
         {
             genes.EndEdit();
-            var next = new SaverSettings { Debug = debug.Checked };
+            var next = new SaverSettings { Debug = debug.Checked, BrowserSkin = browserSkin, TimeScale = timeScale };
             double lat, lon;
             if (!String.IsNullOrWhiteSpace(latitude.Text) || !String.IsNullOrWhiteSpace(longitude.Text))
             {

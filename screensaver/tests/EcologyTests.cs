@@ -86,16 +86,16 @@ namespace Znake.Tests
             visitorWorld.Step(ColorGrid.Uniform(12, 9, green), 0);
             TestRunner.Check(!visitorWorld.Snakes.Contains(visitor), "A wholly departed visitor leaves permanently");
             FruitRetryCadence();
-            DonorTraitReachesFruit(Gene.Imprint, 13, 0.02, 0.17);
-            DonorTraitReachesFruit(Gene.VisitorArrival, 3, 0.02, 0.17);
-            DonorTraitReachesFruit(Gene.VisitorArrival, 2, 0.17, 0.02);
+            DonorTraitReachesFruit(Gene.Imprint, 33, 0.02, 0.17);
+            DonorTraitReachesFruit(Gene.VisitorArrival, 20, 0.02, 0.17);
+            DonorTraitReachesFruit(Gene.VisitorArrival, 7, 0.17, 0.02);
             RareBirthAllelesUseWeightedSurvival();
         }
 
         private static void RareBirthAllelesUseWeightedSurvival()
         {
             Rgb skin = Rgb.StartingGreen;
-            var receiver = Genome.Roll(new SaverRandom(6), null);
+            var receiver = Genome.Roll(new SaverRandom(18), null);
             receiver[Gene.Length3] = 0.08;
             receiver[Gene.Length5] = 0.22;
             receiver[Gene.Length8] = 0.025;

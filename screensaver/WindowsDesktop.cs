@@ -40,8 +40,9 @@ namespace Znake
                 && String.Equals(name.ToString(), expected, StringComparison.OrdinalIgnoreCase);
         }
 
-        public static bool ExcludeFromCapture(IntPtr window)
+        public static bool ExcludeFromCapture(IntPtr window, bool layered = true)
         {
+            if (!layered) return SetWindowDisplayAffinity(window, 0x11);
             const int ExtendedStyle = -20;
            // On Windows 10, affinity needs a redirected surface when it is first set.
             // Apply it before the per-pixel layered surface is attached.
@@ -101,13 +102,21 @@ namespace Znake
 
         public static bool IsDismissalInput(IntPtr messageData)
         {
+            uint device;
+            RawInputData data;
+            return TryReadInput(messageData, out device, out data) && data.Dismisses(device);
+        }
+
+        internal static bool TryReadInput(IntPtr messageData, out uint device, out RawInputData data)
+        {
             const uint ReadInput = 0x10000003;
             uint size = (uint)Marshal.SizeOf(typeof(RawInput));
             uint headerSize = (uint)Marshal.SizeOf(typeof(RawHeader));
             RawInput input;
             uint result = GetRawInputData(messageData, ReadInput, out input, ref size, headerSize);
-            return result != UInt32.MaxValue && result >= headerSize + 6 &&
-                input.Data.Dismisses(input.Header.Type);
+            device = input.Header.Type;
+            data = input.Data;
+            return result != UInt32.MaxValue && result >= headerSize + 8;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -140,6 +149,8 @@ namespace Znake
         {
             [FieldOffset(2)] public ushort KeyboardFlags;
             [FieldOffset(4)] public ushort MouseButtonFlags;
+            [FieldOffset(6)] public ushort VirtualKey;
+            [FieldOffset(6)] public short WheelDelta;
 
             public bool Dismisses(uint deviceType)
             {

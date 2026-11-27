@@ -12,6 +12,8 @@ namespace Znake
     internal sealed class SaverSettings
     {
         [DataMember(Name = "debug")] public bool Debug = true;
+        [DataMember(Name = "browserSkin", EmitDefaultValue = false)] public bool BrowserSkin;
+        [DataMember(Name = "timeScale", EmitDefaultValue = false)] public double? TimeScale;
         [DataMember(Name = "latitude", EmitDefaultValue = false)] public double? Latitude;
         [DataMember(Name = "longitude", EmitDefaultValue = false)] public double? Longitude;
         [DataMember(Name = "genes")] public Dictionary<string, double> Genes = new Dictionary<string, double>();
@@ -21,6 +23,14 @@ namespace Znake
         {
             Debug = true;
             Genes = new Dictionary<string, double>();
+        }
+
+        [OnDeserialized]
+        private void RetireVisionary(StreamingContext context)
+        {
+            if (Genes == null) return;
+            foreach (string key in Genes.Keys.Where(key => key.Equals("Visionary", StringComparison.OrdinalIgnoreCase)).ToArray())
+                Genes.Remove(key);
         }
 
         public static SaverSettings Load(string root)
@@ -53,6 +63,7 @@ namespace Znake
 
         private bool IsValid()
         {
+            if (TimeScale.HasValue && !Numbers.Nonnegative(TimeScale.Value)) return false;
             if (Latitude.HasValue != Longitude.HasValue) return false;
             if (Latitude.HasValue && !(Latitude.Value >= -90 && Latitude.Value <= 90 &&
                 Longitude.Value >= -180 && Longitude.Value <= 180)) return false;
@@ -80,10 +91,13 @@ namespace Znake
 
         private StateStore(string root, FileStream owner)
         {
+            Folder = root;
             path = Path.Combine(root, "world.json");
             backup = Path.Combine(root, "world.previous.json");
             this.owner = owner;
         }
+
+        public string Folder { get; private set; }
 
         public static StateStore Open(string root)
         {
@@ -124,6 +138,9 @@ namespace Znake
             World world = data.World;
             if (data.Version != Version || data.SavedUtcTicks <= 0 || data.SavedUtcTicks > DateTime.MaxValue.Ticks ||
                 world == null || world.Width <= 0 || world.Height <= 0 || world.Ticks < 0 || world.NextId < 2 ||
+                world.NextLayerOrder < 0 || world.ShowMoves < 0 || world.ShowCastSize < 0 ||
+                (world.ShowComplete && !world.ShowActive) || (world.ShowActive && world.ShowGoal < 1) ||
+                !Numbers.Nonnegative(world.GeneEditStep) ||
                 world.Snakes == null || world.Vines == null || world.Fruits == null || world.Imprints == null)
                 return false;
 
@@ -148,13 +165,18 @@ namespace Znake
             }
             foreach (Fruit fruit in world.Fruits)
             {
-                if (fruit == null || !OwnId(world, ids, fruit.Id) || !sources.Contains(fruit.VineId) ||
+                if (fruit == null || !OwnId(world, ids, fruit.Id) ||
+                    (fruit.Antifruit ? fruit.VineId != 0 : !sources.Contains(fruit.VineId)) ||
                     !world.Contains(fruit.Position) || !fruit.Tone.IsValid() || fruit.Genes == null ||
                     !fruit.Genes.IsValid() || !Numbers.Nonnegative(fruit.Remaining) || fruit.Remaining == 0)
                     return false;
             }
-            return world.Imprints.All(entry => world.Contains(entry.Key) && entry.Value.Color.IsValid() &&
-                entry.Value.Alpha > 0 && entry.Value.Alpha <= 1);
+            return (world.Eggs == null || world.Eggs.All(entry => entry.Key > 0 && entry.Key < world.NextId &&
+                entry.Value != null && entry.Value.Parent != null && entry.Value.Parent.IsValid() &&
+                entry.Value.DueUtcTicks > 0 && entry.Value.DueUtcTicks <= DateTime.MaxValue.Ticks)) &&
+                world.Imprints.All(entry => world.Contains(entry.Key) && entry.Value.Color.IsValid() &&
+                entry.Value.Alpha > 0 && entry.Value.Alpha <= 1) &&
+                (world.SquareUses == null || world.SquareUses.All(entry => world.Contains(entry.Key) && entry.Value.IsValid()));
         }
 
         private static bool OwnId(World world, HashSet<long> seen, long id)
@@ -166,14 +188,31 @@ namespace Znake
         {
             if (snake.Genes == null || !snake.Genes.IsValid() || snake.Body == null || snake.Body.Count == 0 ||
                 snake.RecentPath == null || snake.RecentPath.Count == 0 || snake.LargestLength < snake.Body.Count ||
-                !snake.Body.Any(world.Contains) || (snake.IsResident && !snake.Body.All(world.Contains)) ||
+                (!snake.Entering && (!snake.Body.Any(world.Contains) || (snake.IsResident && !snake.Body.All(world.Contains)))) ||
                 snake.Heading < 0 || snake.Heading >= Cell.Directions.Length ||
                 snake.LastMovingGene < Gene.Length3 || snake.LastMovingGene >= Gene.Count ||
                 snake.Mood < Affect.Neutral || snake.Mood > Affect.Stressed ||
                 snake.PendingGrowth < 0 || snake.PendingGrowth > 1 ||
                 snake.Learned == null || snake.Learned.Length != (int)Gene.Count ||
                 snake.Learned.Any(value => !(value >= -1 && value <= 1)) ||
-                !snake.Skin.IsValid() || !snake.StressColor.IsValid() || !snake.DriftColor.IsValid())
+                snake.Moves < 0 || snake.ConsecutiveMissedMoves < 0 ||
+                !(snake.HighStressSeconds >= 0 && snake.HighStressSeconds <= Snake.ChronicStressLimit) ||
+                !(snake.RecentStressSpike >= 0 && snake.RecentStressSpike <= 1) ||
+                (snake.FruitPowerUntil != null && snake.FruitPowerUntil.Any(expiry => expiry <= snake.Moves)) ||
+                (snake.FruitVisionUntil != null && snake.FruitVisionUntil.Any(expiry => expiry <= snake.Moves)) ||
+                (snake.AntiPowerUntil != null && snake.AntiPowerUntil.Any(expiry => expiry <= snake.Moves)) ||
+                (snake.AntiVisionUntil != null && snake.AntiVisionUntil.Any(expiry => expiry <= snake.Moves)) ||
+                (world.NextLayerOrder > 0 && (snake.LayerOrder == null ||
+                    snake.LayerOrder.Count != snake.Body.Count ||
+                    snake.LayerOrder.Any(order => order <= 0 || order >= world.NextLayerOrder))) ||
+                (snake.SmoothedStress.HasValue && !(snake.SmoothedStress.Value >= 0 && snake.SmoothedStress.Value <= 1)) ||
+                (snake.SplitHeadOpacity.HasValue && snake.SplitHeadOpacity.Value != Numbers.Unit(snake.SplitHeadOpacity.Value)) ||
+                (snake.SplitTailOpacity.HasValue && snake.SplitTailOpacity.Value != Numbers.Unit(snake.SplitTailOpacity.Value)) ||
+                (snake.IdleColorSeconds.HasValue &&
+                    !(snake.IdleColorSeconds.Value >= 0 && snake.IdleColorSeconds.Value < Snake.IdleColorInterval)) ||
+                !snake.Skin.IsValid() || !snake.StressColor.IsValid() || !snake.DriftColor.IsValid() ||
+                !snake.BirthColor.HasValue || !snake.BirthColor.Value.IsValid() ||
+                (snake.Sensitivity & ~ColorChannels.All) != ColorChannels.None)
                 return false;
 
             return Numbers.Nonnegative(snake.Energy) && Numbers.Nonnegative(snake.Stress) &&

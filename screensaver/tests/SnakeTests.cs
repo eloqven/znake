@@ -80,10 +80,28 @@ namespace Znake.Tests
 
             LearningFollowsExposure();
             LearningCreditsTheBeneficialCrossing();
+            RelativeSteering(true, 0, new Cell(1, 2), new Cell(2, 1));
+            RelativeSteering(false, 3, new Cell(2, 3), new Cell(3, 2));
             BodyCrossings();
             CrossingOpacity();
             StressStripe();
             SandboxBorder();
+        }
+
+        private static void RelativeSteering(bool resident, int heading, Cell behind, Cell turn)
+        {
+            var skin = new Rgb(1, 1, 1);
+            var grid = ColorGrid.Uniform(5, 5, new Rgb(0, 0, 0));
+            grid[behind] = skin;
+            grid[turn] = Rgb.FromBytes(128, 128, 128);
+            var snake = new Snake(1, resident, new Genome(), skin, new List<Cell> { new Cell(2, 2) }, heading);
+            snake.Motion = 0.99;
+            snake.Speed = 1;
+
+            snake.Advance(new ColorField(grid, null, null), 0, World.StepSeconds,
+                new SaverRandom(338), null, null);
+            TestRunner.Check(snake.Body[0].Equals(turn),
+                (resident ? "A resident" : "A visitor") + " turns when the strongest color match is directly behind");
         }
 
         private static void BodyCrossings()

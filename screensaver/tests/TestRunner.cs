@@ -15,6 +15,8 @@ namespace Znake.Tests
                 EcologyTests.Run();
                 StateTests.Run();
                 WindowsInputTests.Run();
+                WidgetTests.Run();
+                ShowTests.Run();
                 CalibrationTests.Run();
                 Console.WriteLine("PASS {0} deterministic screensaver checks", tests);
                 return 0;

@@ -16,26 +16,22 @@ namespace Znake.Tests
 
         private static void RenderStepArgsBuilder()
         {
-            // Validate that RenderStep references to ShowReplay args are formed correctly
-            // (direct string assembly — same pattern as BuildRunnerArgs in SetupStep)
             double fps   = 30.0;
             double speed = 13.0;
             bool   vision = true;
             string enc   = "auto";
-            string logPath = "/run/show.log";
+            string logPath = "/run/show.log.jsonl";
             string mp4   = "/run/output.mp4";
 
-            string args = "\"" + logPath + "\""
-                + " --fps " + fps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + " --speed " + speed.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + " --encoder " + enc
-                + " --output \"" + mp4 + "\""
-                + (vision ? " --vision" : "");
+            string args = Znake.ControlPanel.RenderStep.BuildReplayArgs(logPath, mp4, fps, speed, enc, vision);
 
             TestRunner.Check(args.Contains("--fps 30"),    "RenderStep: fps 30");
             TestRunner.Check(args.Contains("--speed 13"),  "RenderStep: speed 13");
             TestRunner.Check(args.Contains("--vision"),    "RenderStep: vision flag");
             TestRunner.Check(args.Contains("--encoder auto"), "RenderStep: encoder auto");
+            TestRunner.Check(args.Contains("--log \"/run/show.log.jsonl\""), "RenderStep: --log flag");
+            TestRunner.Check(args.Contains("--out \"/run/output.mp4\""), "RenderStep: --out flag");
+            TestRunner.Check(!args.Contains("--output"), "RenderStep: no unknown --output flag");
         }
 
         private static void RenderJsonCreation()

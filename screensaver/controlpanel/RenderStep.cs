@@ -34,7 +34,7 @@ namespace Znake.ControlPanel
             Build();
         }
 
-        public void ApplySettings(AppSettings s) { settings = s; }
+        public void ApplySettings(AppSettings s) { settings = s; SyncRenderSettings(); }
 
         public void ApplyTheme(ThemePalette palette) { ThemePalette.Apply(this, palette); }
 
@@ -56,10 +56,10 @@ namespace Znake.ControlPanel
                 return;
             }
 
-            string logPath = Path.Combine(sourceFolder, "show.log");
+            string logPath = Path.Combine(sourceFolder, "show.log.jsonl");
             if (!File.Exists(logPath))
             {
-                lblStatus.Text = "show.log not found.";
+                lblStatus.Text = "show.log.jsonl not found.";
                 return;
             }
 
@@ -73,12 +73,7 @@ namespace Znake.ControlPanel
             string enc   = cmbEncoder.SelectedItem != null ? cmbEncoder.SelectedItem.ToString() : "auto";
 
             string replay = settings.ResolveReplayExe();
-            string args = "\"" + logPath + "\""
-                + " --fps " + fps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + " --speed " + speed.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + " --encoder " + enc
-                + " --output \"" + mp4 + "\"";
-            if (vision) args += " --vision";
+            string args = BuildReplayArgs(logPath, mp4, fps, speed, enc, vision);
 
             var psi = new ProcessStartInfo(replay, args)
             {
@@ -126,7 +121,7 @@ namespace Znake.ControlPanel
                     Speed         = speed,
                     VisionOverlay = vision,
                     Encoder       = enc,
-                    Mp4File       = Path.GetFileName(mp4),
+                    Mp4File       = mp4,
                     RenderedUtc   = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture)
                 };
                 if (!String.IsNullOrEmpty(sourceFolder))
@@ -164,6 +159,23 @@ namespace Znake.ControlPanel
             }
         }
 
+        public void Play()
+        {
+            PlayMp4();
+        }
+
+        internal static string BuildReplayArgs(string logPath, string mp4, double fps, double speed,
+            string encoder, bool vision)
+        {
+            string args = "--log \"" + logPath + "\""
+                + " --out \"" + mp4 + "\""
+                + " --fps " + fps.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                + " --speed " + speed.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                + " --encoder " + encoder;
+            if (vision) args += " --vision";
+            return args;
+        }
+
         // ── Helpers ──────────────────────────────────────────────────────────
 
         private double SelectedFps()
@@ -186,14 +198,41 @@ namespace Znake.ControlPanel
 
         // ── Build UI ─────────────────────────────────────────────────────────
 
+        private void SyncRenderSettings()
+        {
+            SelectItem(cmbFps, settings.RenderFps.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture), "12.5");
+            SelectItem(cmbSpeed, settings.PlaybackSpeed.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture), "1");
+            SelectItem(cmbEncoder, settings.EncoderMode, "auto");
+            chkVision.Checked = settings.BurnVisionOverlay;
+        }
+
+        private static void SelectItem(ComboBox combo, string value, string fallback)
+        {
+            for (int i = 0; i < combo.Items.Count; i++)
+            {
+                if (String.Equals(combo.Items[i].ToString(), value, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedIndex = i;
+                    return;
+                }
+            }
+            for (int i = 0; i < combo.Items.Count; i++)
+            {
+                if (String.Equals(combo.Items[i].ToString(), fallback, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedIndex = i;
+                    return;
+                }
+            }
+            if (combo.Items.Count > 0) combo.SelectedIndex = 0;
+        }
+
         private void Build()
         {
             cmbFps.Items.AddRange(new object[] { "12.5", "30" });
-            cmbFps.SelectedIndex = 0;
             cmbSpeed.Items.AddRange(new object[] { "1", "2", "3", "5", "8", "13", "21" });
-            cmbSpeed.SelectedIndex = 0;
             cmbEncoder.Items.AddRange(new object[] { "auto", "cpu", "nvenc", "amf", "qsv" });
-            cmbEncoder.SelectedIndex = 0;
+            SyncRenderSettings();
 
             var layout = new TableLayoutPanel
             {

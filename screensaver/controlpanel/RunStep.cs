@@ -76,8 +76,12 @@ namespace Znake.ControlPanel
             outputFolder  = folder;
             stopFilePath  = Path.Combine(folder, "stop.signal");
             Directory.CreateDirectory(folder);
+            if (File.Exists(stopFilePath))
+            {
+                try { File.Delete(stopFilePath); } catch (IOException) { }
+            }
 
-            string logPath = Path.Combine(folder, "show.log");
+            string logPath = Path.Combine(folder, "show.log.jsonl");
             logTail = new LogTail(logPath);
 
             geometryTimer.Interval = Math.Max(500, (int)(settings.Setup.SnapshotSeconds * 1000));
@@ -102,23 +106,7 @@ namespace Znake.ControlPanel
 
         private ProcessStartInfo BuildProcessStartInfo(string runner, string folder, bool resume)
         {
-            SetupConfig cfg = settings.Setup;
-            string args = "--cast " + cfg.Cast
-                + " --seed " + cfg.Seed
-                + " --duration " + cfg.DurationSeconds.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + " --snapshot " + cfg.SnapshotSeconds.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + " --spawn " + cfg.SpawnMode
-                + " --output \"" + folder + "\""
-                + " --stop-file \"" + stopFilePath + "\""
-                + " --no-replay";
-            if (cfg.Pace > 0)
-                args += " --pace " + cfg.Pace.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-            if (!String.IsNullOrWhiteSpace(cfg.SavedSnakePath))
-                args += " --saved-snake \"" + cfg.SavedSnakePath + "\"";
-            if (!String.IsNullOrWhiteSpace(cfg.BackgroundPath))
-                args += " --background \"" + cfg.BackgroundPath + "\"";
-            if (resume)
-                args += " --resume";
+            string args = SetupStep.BuildRunnerArgs(settings.Setup, folder, stopFilePath, resume, false);
 
             return new ProcessStartInfo(runner, args)
             {
@@ -159,23 +147,37 @@ namespace Znake.ControlPanel
             lblPopulation.Text = "Pop: " + rec.Population + "/" + rec.Cast;
             lblMoves.Text      = "Moves: " + rec.Moves;
 
-            if (machine.State == RunStepState.Running)
-            {
-                if (String.Equals(rec.Status, "complete", StringComparison.OrdinalIgnoreCase))
-                {
-                    bool extinct = rec.Population == 0;
-                    machine.MarkCompleted(extinct);
-                    FinalizeRun();
-                }
-                else if (String.Equals(rec.Status, "failed", StringComparison.OrdinalIgnoreCase))
-                {
-                    machine.MarkFailed("Runner reported failure.");
-                    FinalizeRun();
-                }
-            }
+            ClassifyAndFinalize(rec);
 
             UpdateButtons();
             UpdateCountdownLabel();
+        }
+
+        private void ClassifyAndFinalize(ProgressRecord rec)
+        {
+            if (rec == null || machine.State != RunStepState.Running) return;
+            string status = rec.Status ?? "";
+            if (IsOneOf(status, "complete", "extinct", "time-limit"))
+            {
+                bool extinct = String.Equals(status, "extinct", StringComparison.OrdinalIgnoreCase)
+                    || rec.Population == 0;
+                machine.MarkCompleted(extinct);
+                FinalizeRun();
+            }
+            else if (IsOneOf(status, "failed", "error", "replay-failed", "replay-missing"))
+            {
+                machine.MarkFailed("Runner reported " + status + ".");
+                FinalizeRun();
+            }
+        }
+
+        private static bool IsOneOf(string status, params string[] candidates)
+        {
+            foreach (string candidate in candidates)
+            {
+                if (String.Equals(status, candidate, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         private void OnGeometryTick(object sender, EventArgs e)
@@ -205,9 +207,15 @@ namespace Znake.ControlPanel
             geometryTimer.Stop();
             if (machine.State == RunStepState.Running)
             {
-                // exited without progress.json saying complete — treat as stopped
-                machine.MarkStopped();
-                RecordStopped();
+                ProgressRecord final = String.IsNullOrEmpty(outputFolder) ? null
+                    : JsonFiles.Read<ProgressRecord>(Path.Combine(outputFolder, "progress.json"), false);
+                ClassifyAndFinalize(final);
+                if (machine.State == RunStepState.Running)
+                {
+                    // no terminal progress record — treat as stopped and still surface the summary
+                    machine.MarkStopped();
+                    FinalizeRun();
+                }
             }
             UpdateButtons();
         }
@@ -216,12 +224,12 @@ namespace Znake.ControlPanel
         {
             statsTimer.Stop();
             geometryTimer.Stop();
-            RecordStopped();
+            RecordRunOutcome();
             ShowSummaryBanner();
             UpdateButtons();
         }
 
-        private void RecordStopped()
+        private void RecordRunOutcome()
         {
             if (!String.IsNullOrEmpty(outputFolder))
                 history.RecordStopped(outputFolder, settings.Setup.Seed);
@@ -235,6 +243,8 @@ namespace Znake.ControlPanel
                 ? "Run complete — extinction!"
                 : machine.State == RunStepState.CompletedTimeLimit
                     ? "Run complete — time limit reached."
+                    : machine.State == RunStepState.Failed
+                    ? "Run failed: " + machine.FailureMessage
                     : "Run stopped.";
             pnlSummary.Visible = true;
             if (machine.CountdownActive)

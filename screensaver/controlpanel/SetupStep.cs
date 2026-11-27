@@ -82,11 +82,18 @@ namespace Znake.ControlPanel
 
         public string BuildRunnerArgs(string outputFolder, string stopFilePath)
         {
-            SetupConfig cfg = settings.Setup;
+            return BuildRunnerArgs(settings.Setup, outputFolder, stopFilePath, false, false);
+        }
+
+        internal static string BuildRunnerArgs(SetupConfig cfg, string outputFolder, string stopFilePath,
+            bool resume, bool validateOnly)
+        {
             var sb = new StringBuilder();
+            if (validateOnly) sb.Append("--validate-only ");
             sb.Append("--cast " + cfg.Cast);
             sb.Append(" --seed " + cfg.Seed);
-            sb.Append(" --duration " + cfg.DurationSeconds.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+            sb.Append(" --square " + cfg.Square);
+            sb.Append(" --seconds " + cfg.DurationSeconds.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
             sb.Append(" --snapshot " + cfg.SnapshotSeconds.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
             if (cfg.Pace > 0)
                 sb.Append(" --pace " + cfg.Pace.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
@@ -96,10 +103,11 @@ namespace Znake.ControlPanel
             if (!String.IsNullOrWhiteSpace(cfg.BackgroundPath))
                 sb.Append(" --background \"" + cfg.BackgroundPath + "\"");
             if (!String.IsNullOrWhiteSpace(outputFolder))
-                sb.Append(" --output \"" + outputFolder + "\"");
+                sb.Append(" --folder \"" + outputFolder + "\"");
             if (!String.IsNullOrWhiteSpace(stopFilePath))
                 sb.Append(" --stop-file \"" + stopFilePath + "\"");
             sb.Append(" --no-replay");
+            if (resume) sb.Append(" --resume");
             return sb.ToString();
         }
 
@@ -306,13 +314,7 @@ namespace Znake.ControlPanel
             btnDryRun.Enabled = false;
 
             string runner = settings.ResolveRunnerExe();
-            string args = "--validate-only --cast " + settings.Setup.Cast
-                + " --seed " + settings.Setup.Seed
-                + " --spawn " + settings.Setup.SpawnMode;
-            if (!String.IsNullOrWhiteSpace(settings.Setup.BackgroundPath))
-                args += " --background \"" + settings.Setup.BackgroundPath + "\"";
-            if (!String.IsNullOrWhiteSpace(settings.Setup.SavedSnakePath))
-                args += " --saved-snake \"" + settings.Setup.SavedSnakePath + "\"";
+            string args = BuildRunnerArgs(settings.Setup, null, null, false, true);
 
             var psi = new System.Diagnostics.ProcessStartInfo(runner, args)
             {
@@ -321,11 +323,16 @@ namespace Znake.ControlPanel
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            var stderr = new StringBuilder();
             var proc = new System.Diagnostics.Process { StartInfo = psi, EnableRaisingEvents = true };
+            proc.ErrorDataReceived += delegate(object s2, System.Diagnostics.DataReceivedEventArgs e2)
+            {
+                if (e2.Data != null) stderr.AppendLine(e2.Data);
+            };
             proc.Exited += delegate(object s2, EventArgs e2)
             {
                 int code = proc.ExitCode;
-                string err = proc.StandardError.ReadToEnd().Trim();
+                string err = stderr.ToString().Trim();
                 proc.Dispose();
                 if (InvokeRequired)
                     BeginInvoke(new Action(delegate() { SetDryResult(code == 0, err); }));

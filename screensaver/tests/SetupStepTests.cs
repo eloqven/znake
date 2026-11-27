@@ -117,6 +117,14 @@ namespace Znake.Tests
             TestRunner.Check(args.Contains("--seed 20261127"), "CLI arg: seed");
             TestRunner.Check(args.Contains("--spawn edge"),    "CLI arg: spawn");
             TestRunner.Check(args.Contains("--no-replay"),     "CLI arg: no-replay");
+            TestRunner.Check(args.Contains("--square "),       "CLI arg: square");
+            TestRunner.Check(args.Contains("--seconds 7200"),  "CLI arg: seconds (runner flag name)");
+            TestRunner.Check(args.Contains("--folder \"/some/folder\""), "CLI arg: folder (runner flag name)");
+            TestRunner.Check(args.Contains("--stop-file \"/some/stop\""), "CLI arg: stop file");
+            TestRunner.Check(!args.Contains("--duration") && !args.Contains("--output"),
+                "CLI arg: no unknown --duration/--output flags");
+            string dry = Znake.ControlPanel.SetupStep.BuildRunnerArgs(settings.Setup, null, null, false, true);
+            TestRunner.Check(dry.StartsWith("--validate-only "), "CLI arg: dry run uses --validate-only");
         }
 
         private static void SetupConfigNormalize()

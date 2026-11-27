@@ -167,7 +167,6 @@ namespace Znake.ControlPanel
 
             FormClosing += delegate(object s, FormClosingEventArgs e)
             {
-                settings.Save(dataRoot);
                 preview.PersistToSettings(settings);
                 settings.Save(dataRoot);
                 CleanupNotifyIcon();
@@ -204,6 +203,7 @@ namespace Znake.ControlPanel
             if (keyData == Keys.F8)
             {
                 ShowStep(2);
+                renderStep.Play();
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);

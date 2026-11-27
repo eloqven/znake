@@ -178,12 +178,14 @@ namespace Znake
             if (ShowMoves >= ShowGoal || (ShowNoRespawn && Snakes.Count == 0)) ShowComplete = true;
         }
 
-        internal void StartShow(int cast, bool noRespawn = false)
+        internal void StartShow(int cast, bool noRespawn = false, bool randomSpawn = false)
         {
             if (WidgetSquare == 0)
                 throw new InvalidOperationException("The endurance show needs the widget habitat.");
             if (cast < 1 || cast > ShowTarget)
                 throw new ArgumentOutOfRangeException("cast");
+            if (randomSpawn && cast > Width * Height)
+                throw new ArgumentOutOfRangeException("cast", "Random spawn cast exceeds arena cell count.");
             if (Snakes.Count != 1 || Vines.Count != 0 || Fruits.Count != 0)
                 throw new InvalidOperationException("The endurance show starts from a fresh world.");
 
@@ -199,11 +201,120 @@ namespace Znake
                 ShowGoal = goal;
 #endif
             var random = new SaverRandom(RandomState);
-            var used = new HashSet<int>();
-            int slot = EntrySlotOf(Snakes[0]);
-            if (slot >= 0) used.Add(slot);
-            while (Snakes.Count < cast) AddOpeningSnake(random, used);
+            if (randomSpawn)
+            {
+                var occupiedHeads = new HashSet<Cell>();
+                var occupiedCells = new HashSet<Cell>();
+                PlaceInArena(Snakes[0], random, occupiedHeads, occupiedCells);
+                while (Snakes.Count < cast)
+                    AddRandomInArenaSnake(random, occupiedHeads, occupiedCells);
+            }
+            else
+            {
+                var used = new HashSet<int>();
+                int slot = EntrySlotOf(Snakes[0]);
+                if (slot >= 0) used.Add(slot);
+                while (Snakes.Count < cast) AddOpeningSnake(random, used);
+            }
             RandomState = random.State;
+        }
+
+        private void PlaceInArena(Snake snake, SaverRandom random, HashSet<Cell> occupiedHeads, HashSet<Cell> occupiedCells)
+        {
+            int length = snake.Body != null && snake.Body.Count > 0 ? snake.Body.Count : snake.Genes.BirthLength(random);
+            int heading;
+            Cell head = PickFreeCell(random, occupiedHeads);
+            List<Cell> body = BuildInArenaBody(head, length, random, occupiedCells, out heading);
+            snake.Body = body;
+            snake.Heading = heading;
+            snake.Entering = false;
+            snake.Speed = 1;
+            snake.LargestLength = Math.Max(snake.LargestLength, body.Count);
+            snake.RecentPath = new List<Cell>(body);
+            snake.RecentPath.Reverse();
+            if (NextLayerOrder > 0) PlaceInitialLayers(snake);
+            occupiedHeads.Add(head);
+            foreach (Cell cell in body) occupiedCells.Add(cell);
+        }
+
+        private Snake AddRandomInArenaSnake(SaverRandom random, HashSet<Cell> occupiedHeads, HashSet<Cell> occupiedCells)
+        {
+            Genome genes = Genome.Roll(random, null);
+            Rgb skin = Rgb.Mix(Rgb.StartingGreen, new Rgb(random.Next(), random.Next(), random.Next()), 0.55);
+            int length = genes.BirthLength(random);
+            int heading;
+            Cell head = PickFreeCell(random, occupiedHeads);
+            List<Cell> body = BuildInArenaBody(head, length, random, occupiedCells, out heading);
+            var snake = new Snake(NewId(), false, genes, skin, body, heading)
+            {
+                Entering = false,
+                StaysInArena = true,
+                Speed = 1
+            };
+            snake.RollColorMutation(random);
+            if (NextLayerOrder > 0) PlaceInitialLayers(snake);
+            Snakes.Add(snake);
+            occupiedHeads.Add(head);
+            foreach (Cell cell in body) occupiedCells.Add(cell);
+            return snake;
+        }
+
+        private Cell PickFreeCell(SaverRandom random, HashSet<Cell> occupiedHeads)
+        {
+            int total = Width * Height;
+            if (occupiedHeads.Count >= total)
+                throw new InvalidOperationException("No free arena cells remain for spawn.");
+            int start = random.Index(total);
+            for (int offset = 0; offset < total; offset++)
+            {
+                int index = (start + offset) % total;
+                var candidate = new Cell(index % Width, index / Width);
+                if (!occupiedHeads.Contains(candidate)) return candidate;
+            }
+            throw new InvalidOperationException("No free arena cells remain for spawn.");
+        }
+
+        private List<Cell> BuildInArenaBody(Cell head, int length, SaverRandom random, HashSet<Cell> occupiedCells, out int heading)
+        {
+            var body = new List<Cell>(length) { head };
+            int preferredHeading = random.Index(Cell.Directions.Length);
+            heading = preferredHeading;
+
+            while (body.Count < length)
+            {
+                Cell current = body[body.Count - 1];
+                Cell? chosen = null;
+                int startDir = random.Index(Cell.Directions.Length);
+                for (int pass = 0; pass < 3 && !chosen.HasValue; pass++)
+                {
+                    for (int step = 0; step < Cell.Directions.Length; step++)
+                    {
+                        int dir = (startDir + step) % Cell.Directions.Length;
+                        Cell next = current.Move(Cell.Directions[dir]);
+                        if (!Contains(next)) continue;
+                        if (pass == 0 && (occupiedCells.Contains(next) || body.Contains(next))) continue;
+                        if (pass == 1 && body.Contains(next)) continue;
+                        chosen = next;
+                        break;
+                    }
+                }
+                body.Add(chosen ?? current);
+            }
+
+            if (body.Count >= 2)
+            {
+                var dx = body[0].X - body[1].X;
+                var dy = body[0].Y - body[1].Y;
+                for (int d = 0; d < Cell.Directions.Length; d++)
+                {
+                    if (Cell.Directions[d].X == dx && Cell.Directions[d].Y == dy)
+                    {
+                        heading = d;
+                        break;
+                    }
+                }
+            }
+            return body;
         }
 
         internal int EntrySlotOf(Snake snake)

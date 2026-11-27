@@ -37,10 +37,27 @@ namespace Znake.Headless
         [DataMember(Name = "tick")] public long Tick;
         [DataMember(Name = "seed")] public uint Seed;
         [DataMember(Name = "pace")] public double Pace;
+        [DataMember(Name = "square")] public int Square;
+        [DataMember(Name = "spawn")] public string Spawn;
+        [DataMember(Name = "savedSnakeId", EmitDefaultValue = false)] public long? SavedSnakeId;
+        [DataMember(Name = "savedSnakeAlive")] public bool SavedSnakeAlive;
         [DataMember(Name = "background")] public string Background;
         [DataMember(Name = "log")] public string Log;
         [DataMember(Name = "mp4")] public string Mp4;
         [DataMember(Name = "replayScript")] public string ReplayScript;
+    }
+
+    [DataContract]
+    internal sealed class SeriesEntry
+    {
+        [DataMember(Name = "utc")] public string Utc;
+        [DataMember(Name = "gameSeconds")] public double GameSeconds;
+        [DataMember(Name = "wallSeconds")] public double WallSeconds;
+        [DataMember(Name = "steps")] public long Steps;
+        [DataMember(Name = "moves")] public long Moves;
+        [DataMember(Name = "population")] public int Population;
+        [DataMember(Name = "originalAlive")] public int OriginalAlive;
+        [DataMember(Name = "savedSnakeAlive")] public bool SavedSnakeAlive;
     }
 
     [DataContract]
@@ -56,78 +73,197 @@ namespace Znake.Headless
         [STAThread]
         private static int Main(string[] args)
         {
-            string background = null, folder = null, replayExe = null, savedSnakePath = null;
-            double seconds = 7200, snapshot = 10, progress = 2, statusEvery = 300, hold = 0.2;
-            double pace = 0;
-            int cast = 89, square = 24, fps = 30;
-            uint seed = 20261127;
-            bool replay = true;
+            return Run(args);
+        }
 
-            for (int index = 0; index < args.Length; index++)
+        internal static int Run(string[] args)
+        {
+            stopping = false;
+            string background = null, folder = null, replayExe = null, savedSnakePath = null;
+            string stopFile = null, spawn = "edge";
+            double seconds = 7200, snapshot = 10, progress = 2, statusEvery = 300, hold = 0.2;
+            double pace = 0, fps = 12.5;
+            int cast = 89, square = 24;
+            uint seed = 20261127;
+            bool replay = true, resume = false, validateOnly = false;
+            bool secondsSet = false, squareSet = false, spawnSet = false;
+
+            try
             {
-                switch (args[index])
+                for (int index = 0; index < args.Length; index++)
                 {
-                    case "--background": background = Next(args, ref index); break;
-                    case "--folder": folder = Next(args, ref index); break;
-                    case "--seconds": seconds = ParseDouble(Next(args, ref index)); break;
-                    case "--cast": cast = ParseInt(Next(args, ref index)); break;
-                    case "--square": square = ParseInt(Next(args, ref index)); break;
-                    case "--seed": seed = ParseUInt(Next(args, ref index)); break;
-                    case "--snapshot": snapshot = ParseDouble(Next(args, ref index)); break;
-                    case "--progress": progress = ParseDouble(Next(args, ref index)); break;
-                    case "--status": statusEvery = ParseDouble(Next(args, ref index)); break;
-                    case "--pace": pace = ParseDouble(Next(args, ref index)); break;
-                    case "--hold": hold = ParseDouble(Next(args, ref index)); break;
-                    case "--fps": fps = ParseInt(Next(args, ref index)); break;
-                    case "--replay-exe": replayExe = Next(args, ref index); break;
-                    case "--saved-snake": savedSnakePath = Next(args, ref index); break;
-                    case "--no-replay": replay = false; break;
-                    default:
-                        Console.Error.WriteLine("Unknown argument: " + args[index]);
-                        return 2;
+                    switch (args[index])
+                    {
+                        case "--background": background = Next(args, ref index); break;
+                        case "--folder": folder = Next(args, ref index); break;
+                        case "--seconds": seconds = ParseDouble(Next(args, ref index)); secondsSet = true; break;
+                        case "--cast": cast = ParseInt(Next(args, ref index)); break;
+                        case "--square": square = ParseInt(Next(args, ref index)); squareSet = true; break;
+                        case "--seed": seed = ParseUInt(Next(args, ref index)); break;
+                        case "--snapshot": snapshot = ParseDouble(Next(args, ref index)); break;
+                        case "--progress": progress = ParseDouble(Next(args, ref index)); break;
+                        case "--status": statusEvery = ParseDouble(Next(args, ref index)); break;
+                        case "--pace": pace = ParseDouble(Next(args, ref index)); break;
+                        case "--hold": hold = ParseDouble(Next(args, ref index)); break;
+                        case "--fps": fps = ParseDouble(Next(args, ref index)); break;
+                        case "--replay-exe": replayExe = Next(args, ref index); break;
+                        case "--saved-snake": savedSnakePath = Next(args, ref index); break;
+                        case "--stop-file": stopFile = Next(args, ref index); break;
+                        case "--spawn": spawn = Next(args, ref index).ToLowerInvariant(); spawnSet = true; break;
+                        case "--resume": resume = true; break;
+                        case "--validate-only": validateOnly = true; break;
+                        case "--no-replay": replay = false; break;
+                        default:
+                            Console.Error.WriteLine("Unknown argument: " + args[index]);
+                            return 2;
+                    }
                 }
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error.Message);
+                return 2;
+            }
+
+            if (spawn != "edge" && spawn != "random")
+            {
+                Console.Error.WriteLine("Invalid --spawn mode: " + spawn + " (expected edge or random)");
+                return 2;
+            }
+            if (seconds <= 0 || cast < 1 || square < 4 || snapshot <= 0 || progress <= 0 ||
+                statusEvery <= 0 || pace < 0 || hold <= 0 || fps <= 0)
+            {
+                Console.Error.WriteLine("Numeric arguments must be positive (and --pace >= 0).");
+                return 2;
             }
 
             folder = folder ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "show-89");
-            background = background ?? Path.Combine(folder, "background.png");
             replayExe = replayExe ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ShowReplay.exe");
             savedSnakePath = savedSnakePath ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Znake", "Widget", "world.json");
 
+            ProgressRecord priorProgress = null;
+            Dictionary<string, string> runInfo = null;
+            if (resume)
+            {
+                if (!Directory.Exists(folder))
+                {
+                    Console.Error.WriteLine("Cannot resume; run folder does not exist: " + folder);
+                    return 1;
+                }
+                priorProgress = JsonFiles.Read<ProgressRecord>(Path.Combine(folder, "progress.json"), false);
+                runInfo = ReadRunInfo(Path.Combine(folder, "run-info.txt"));
+                if (background == null)
+                {
+                    string infoBg;
+                    if (runInfo != null && runInfo.TryGetValue("background", out infoBg) && File.Exists(infoBg))
+                        background = infoBg;
+                }
+                if (!secondsSet && priorProgress != null && priorProgress.TotalGameSeconds > 0)
+                    seconds = priorProgress.TotalGameSeconds;
+                if (!squareSet && priorProgress != null && priorProgress.Square >= 4)
+                    square = priorProgress.Square;
+                if (!spawnSet && priorProgress != null && !String.IsNullOrEmpty(priorProgress.Spawn))
+                    spawn = priorProgress.Spawn;
+            }
+
+            background = background ?? Path.Combine(folder, "background.png");
             if (!File.Exists(background))
             {
                 Console.Error.WriteLine("No background image at " + background);
                 return 1;
             }
-            if (seconds <= 0) seconds = 7200;
-            if (cast < 1) cast = 89;
-            if (square < 4) square = 24;
-            if (snapshot <= 0) snapshot = 10;
-            if (progress <= 0) progress = 2;
-            if (statusEvery <= 0) statusEvery = 300;
-            if (pace < 0) pace = 0;
-            if (hold <= 0) hold = 0.2;
-            if (fps <= 0) fps = 30;
+
+            int imageWidth, imageHeight;
+            try
+            {
+                using (var probe = new Bitmap(background))
+                {
+                    imageWidth = probe.Width;
+                    imageHeight = probe.Height;
+                }
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine("Invalid background image: " + error.Message);
+                return 1;
+            }
+
+            int gridWidth = (imageWidth + square - 1) / square;
+            int gridHeight = (imageHeight + square - 1) / square;
+            int freeCells = checked(gridWidth * gridHeight);
+            if (!resume)
+            {
+                if (spawn == "random" && cast > freeCells)
+                {
+                    Console.Error.WriteLine("Cast " + cast + " exceeds arena free-cell count (" + freeCells + ").");
+                    return 1;
+                }
+                int edgeSlots = 2 * (gridWidth + gridHeight);
+                if (spawn == "edge" && cast > edgeSlots)
+                {
+                    Console.Error.WriteLine("Cast " + cast + " exceeds edge entry slot count (" + edgeSlots + ").");
+                    return 1;
+                }
+            }
+
+            if (validateOnly)
+            {
+                if (resume)
+                {
+                    try
+                    {
+                        using (StateStore checkStore = StateStore.Open(folder))
+                        {
+                            if (checkStore == null)
+                            {
+                                Console.Error.WriteLine("Checkpoint is locked by another process.");
+                                return 1;
+                            }
+                            checkStore.Load(DateTime.UtcNow, false);
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        Console.Error.WriteLine("Checkpoint validation failed: " + error.Message);
+                        return 1;
+                    }
+                }
+                Console.WriteLine("valid grid=" + gridWidth + "x" + gridHeight +
+                    " freeCells=" + freeCells + " cast=" + cast + " spawn=" + spawn);
+                return 0;
+            }
 
             long totalSteps = Math.Max(1L, (long)Math.Round(seconds / World.StepSeconds));
             seconds = totalSteps * World.StepSeconds;
 
-            Directory.CreateDirectory(folder);
-            ShowLog.Clear(folder);
-            Console.CancelKeyPress += delegate(object sender, ConsoleCancelEventArgs cancel)
+            string mp4 = Path.Combine(folder, "show-89.mp4");
+            string replayScript = Path.Combine(folder, "replay.ps1");
+            string logPath = Path.Combine(folder, "show.log.jsonl");
+            string seriesPath = Path.Combine(folder, "series.jsonl");
+            string startedUtc = priorProgress != null && !String.IsNullOrEmpty(priorProgress.StartedUtc)
+                ? priorProgress.StartedUtc
+                : DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+            DateTimeOffset gameClockStart = DateTimeOffset.Now;
+            if (priorProgress != null && !String.IsNullOrEmpty(priorProgress.GameClockStart))
+            {
+                DateTimeOffset parsedClock;
+                if (DateTimeOffset.TryParse(priorProgress.GameClockStart, CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out parsedClock))
+                    gameClockStart = parsedClock;
+            }
+
+            ConsoleCancelEventHandler cancelHandler = delegate(object sender, ConsoleCancelEventArgs cancel)
             {
                 cancel.Cancel = true;
                 stopping = true;
             };
+            Console.CancelKeyPress += cancelHandler;
 
-            string startedUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-            DateTimeOffset gameClockStart = DateTimeOffset.Now;
-            string mp4 = Path.Combine(folder, "show-89.mp4");
-            string replayScript = Path.Combine(folder, "replay.ps1");
-            string logPath = Path.Combine(folder, "show.log.jsonl");
             World world = null;
             HashSet<long> initial = null;
+            long? savedSnakeId = null;
             string state = "starting";
             long steps = 0;
             double gameSeconds = 0, rate = 0;
@@ -135,142 +271,205 @@ namespace Znake.Headless
 
             try
             {
-                using (var source = new Bitmap(background))
+                if (!resume)
                 {
-                    ColorGrid grid = Sample(source, square);
-                    var settings = new SaverSettings { TimeScale = 1 };
-                    world = new World(grid.Width, grid.Height, seed, settings.BirthOverrides(), square);
-                    world.StartShow(cast, true);
-                    Snake savedSnake = LoadSavedSnake(savedSnakePath);
-                    if (savedSnake != null)
-                        AdoptSavedSnake(world, savedSnake);
-                    EnsureDistinctGenomes(world);
-                    initial = new HashSet<long>(world.Snakes.Select(snake => snake.Id));
+                    Directory.CreateDirectory(folder);
+                    ShowLog.Clear(folder);
+                    if (File.Exists(seriesPath)) File.Delete(seriesPath);
+                }
 
-                    Console.WriteLine("background " + background + " " + source.Width + "x" + source.Height);
-                    Console.WriteLine("grid " + grid.Width + "x" + grid.Height + " square " + square +
-                        " cast " + world.Snakes.Count + " seed " + seed);
-                    Console.WriteLine("saved snake " + (savedSnake == null ? "not found at " + savedSnakePath :
-                        "id " + savedSnake.Id + " adopted as resident"));
-                    Console.WriteLine("game clock " + gameClockStart.ToString("o", CultureInfo.InvariantCulture) +
-                        " duration " + Format(seconds) + " steps " + totalSteps +
-                        " pace " + (pace > 0 ? pace.ToString("0.###", CultureInfo.InvariantCulture) + "x" : "unlimited"));
-                    WriteRunInfo(folder, background, seconds, totalSteps, gameClockStart, world.Snakes.Count,
-                        seed, square, grid.Width, grid.Height, snapshot, progress, statusEvery, pace,
-                        savedSnakePath);
-                    WriteScripts(folder, replayExe, mp4, seconds, cast, seed, snapshot, progress,
-                        statusEvery, pace, hold, fps, savedSnakePath);
-
-                    using (ShowLog log = ShowLog.Open(folder, snapshot))
+                using (StateStore store = StateStore.Open(folder))
+                {
+                    if (store == null)
                     {
-                        log.Start(world, settings, new Rectangle(0, 0, source.Width, source.Height),
-                            source, Point.Empty, seconds);
-                        log.Record(world, 0, true);
+                        Console.Error.WriteLine("Another process holds the lock for " + folder);
+                        return 1;
+                    }
 
-                        state = "running";
-                        WriteProgress(folder, state, startedUtc, gameClockStart, 0, 0, seconds, totalSteps,
-                            0, pace, 0, world, initial, seed, background, logPath, mp4, replayScript);
-                        WriteStatus(folder, state, 0, 0, seconds, world, cast, initial.Count, 0);
-                        clock.Start();
-                        double nextProgress = 0, nextStatus = 0;
-
-                        while (!stopping)
+                    using (var source = new Bitmap(background))
+                    {
+                        ColorGrid grid = Sample(source, square);
+                        var settings = new SaverSettings { TimeScale = 1 };
+                        if (resume)
                         {
-                            if (steps >= totalSteps)
+                            world = store.Load(DateTime.UtcNow, false);
+                            if (world == null)
                             {
-                                state = "time-limit";
-                                break;
+                                Console.Error.WriteLine("No checkpoint found to resume in " + folder);
+                                return 1;
+                            }
+                            if (world.WidgetSquare > 0) square = world.WidgetSquare;
+                            seed = world.ShowSeed;
+                            cast = world.ShowCastSize;
+                            steps = (long)Math.Round(world.ShowSeconds / World.StepSeconds);
+                            gameSeconds = world.ShowSeconds;
+                            if (world.ShowComplete && world.Snakes.Count > 0 &&
+                                world.ShowMoves < world.ShowGoal && steps < totalSteps)
+                            {
+                                world.ShowComplete = false;
+                            }
+                            savedSnakeId = priorProgress != null && priorProgress.SavedSnakeId.HasValue
+                                ? priorProgress.SavedSnakeId
+                                : FindResidentId(world);
+                            initial = new HashSet<long>(world.Snakes.Select(snake => snake.Id));
+                        }
+                        else
+                        {
+                            world = new World(grid.Width, grid.Height, seed, settings.BirthOverrides(), square);
+                            Snake savedSnake = LoadSavedSnake(savedSnakePath);
+                            if (savedSnake != null)
+                                AdoptSavedSnake(world, savedSnake);
+                            world.StartShow(cast, true, spawn == "random");
+                            EnsureDistinctGenomes(world);
+                            savedSnakeId = FindResidentId(world);
+                            initial = new HashSet<long>(world.Snakes.Select(snake => snake.Id));
+
+                            Console.WriteLine("background " + background + " " + source.Width + "x" + source.Height);
+                            Console.WriteLine("grid " + grid.Width + "x" + grid.Height + " square " + square +
+                                " cast " + world.Snakes.Count + " seed " + seed + " spawn " + spawn);
+                            Console.WriteLine("saved snake " + (savedSnake == null ? "not found at " + savedSnakePath :
+                                "id " + savedSnake.Id + " adopted as resident"));
+                            Console.WriteLine("game clock " + gameClockStart.ToString("o", CultureInfo.InvariantCulture) +
+                                " duration " + Format(seconds) + " steps " + totalSteps +
+                                " pace " + (pace > 0 ? pace.ToString("0.###", CultureInfo.InvariantCulture) + "x" : "unlimited"));
+                            WriteRunInfo(folder, background, seconds, totalSteps, gameClockStart, world.Snakes.Count,
+                                seed, square, grid.Width, grid.Height, snapshot, progress, statusEvery, pace,
+                                spawn, savedSnakePath);
+                            WriteScripts(folder, replayExe, mp4, seconds, cast, square, seed, snapshot, progress,
+                                statusEvery, pace, spawn, hold, fps, savedSnakePath);
+                        }
+
+                        double lastNight = 0;
+                        using (ShowLog log = ShowLog.Open(folder, snapshot))
+                        {
+                            if (!resume || log.StartedNew)
+                            {
+                                log.Start(world, settings, new Rectangle(0, 0, source.Width, source.Height),
+                                    source, Point.Empty, seconds);
+                                log.Record(world, 0, true, 0);
                             }
 
-                            int chunk = pace > 0 ? 16 : 64;
-                            for (int index = 0; index < chunk && steps < totalSteps; index++)
+                            state = "running";
+                            store.Save(world, DateTime.UtcNow);
+                            WriteProgress(folder, state, startedUtc, gameClockStart, gameSeconds, 0, seconds,
+                                totalSteps, steps, pace, rate, square, spawn, world, initial, savedSnakeId,
+                                seed, background, logPath, mp4, replayScript);
+                            AppendSeries(seriesPath, gameSeconds, 0, steps, world, initial, savedSnakeId);
+                            WriteStatus(folder, state, 0, gameSeconds, seconds, world, cast, initial.Count, rate);
+                            clock.Start();
+                            double nextProgress = 0, nextStatus = 0;
+
+                            while (!stopping)
                             {
-                                steps++;
-                                gameSeconds = steps * World.StepSeconds;
-                                world.ShowSeconds = gameSeconds;
-                                DateTimeOffset now = gameClockStart.AddSeconds(gameSeconds);
-                                double night = Daylight.NightAt(now, null, null);
-                                world.Step(grid, night, now, null, null);
-                                rate = world.ShowMoves / Math.Max(1e-9, gameSeconds);
-                                log.Record(world, rate);
-                                if (world.ShowComplete)
+                                if (StopFileExists(stopFile))
                                 {
-                                    state = world.Snakes.Count == 0 ? "extinct" : "complete";
+                                    stopping = true;
                                     break;
                                 }
-                            }
-                            if (state != "running") break;
+                                if (steps >= totalSteps)
+                                {
+                                    state = "time-limit";
+                                    break;
+                                }
 
-                            double wall = clock.Elapsed.TotalSeconds;
-                            if (wall >= nextProgress)
-                            {
-                                WriteProgress(folder, state, startedUtc, gameClockStart, gameSeconds, wall,
-                                    seconds, totalSteps, steps, pace, rate, world, initial, seed,
-                                    background, logPath, mp4, replayScript);
-                                nextProgress = wall + progress;
-                            }
-                            if (wall >= nextStatus)
-                            {
-                                WriteStatus(folder, state, wall, gameSeconds, seconds, world, cast,
-                                    CountOriginal(world, initial), rate);
-                                nextStatus = wall + statusEvery;
+                                int chunk = pace > 0 ? 16 : 64;
+                                for (int index = 0; index < chunk && steps < totalSteps; index++)
+                                {
+                                    steps++;
+                                    gameSeconds = steps * World.StepSeconds;
+                                    world.ShowSeconds = gameSeconds;
+                                    DateTimeOffset now = gameClockStart.AddSeconds(gameSeconds);
+                                    lastNight = Daylight.NightAt(now, null, null);
+                                    world.Step(grid, lastNight, now, null, null);
+                                    rate = world.ShowMoves / Math.Max(1e-9, gameSeconds);
+                                    log.Record(world, rate, false, lastNight);
+                                    if (world.ShowComplete)
+                                    {
+                                        state = world.Snakes.Count == 0 ? "extinct" : "complete";
+                                        break;
+                                    }
+                                }
+                                if (state != "running") break;
+
+                                double wall = clock.Elapsed.TotalSeconds;
+                                if (wall >= nextProgress)
+                                {
+                                    store.Save(world, DateTime.UtcNow);
+                                    WriteProgress(folder, state, startedUtc, gameClockStart, gameSeconds, wall,
+                                        seconds, totalSteps, steps, pace, rate, square, spawn, world, initial,
+                                        savedSnakeId, seed, background, logPath, mp4, replayScript);
+                                    AppendSeries(seriesPath, gameSeconds, wall, steps, world, initial, savedSnakeId);
+                                    nextProgress = wall + progress;
+                                }
+                                if (wall >= nextStatus)
+                                {
+                                    WriteStatus(folder, state, wall, gameSeconds, seconds, world, cast,
+                                        CountOriginal(world, initial), rate);
+                                    nextStatus = wall + statusEvery;
+                                }
+
+                                if (pace > 0)
+                                {
+                                    double target = steps / (12.5 * pace);
+                                    double ahead = target - clock.Elapsed.TotalSeconds;
+                                    if (ahead > 0.002)
+                                        Thread.Sleep((int)Math.Min(50, ahead * 1000));
+                                }
+                                else
+                                {
+                                    Thread.Sleep(0);
+                                }
                             }
 
-                            if (pace > 0)
-                            {
-                                double target = steps / (12.5 * pace);
-                                double ahead = target - clock.Elapsed.TotalSeconds;
-                                if (ahead > 0.002)
-                                    Thread.Sleep((int)Math.Min(50, ahead * 1000));
-                            }
-                            else
-                            {
-                                Thread.Sleep(0);
-                            }
+                            if (stopping) state = "stopped";
+                            if (state == "time-limit") gameSeconds = seconds;
+                            double finalWall = clock.Elapsed.TotalSeconds;
+                            world.ShowSeconds = gameSeconds;
+                            if (state == "stopped")
+                                world.ShowComplete = false;
+                            else if (state != "extinct" && state != "complete")
+                                world.ShowComplete = true;
+
+                            log.Record(world, rate, true, lastNight);
+                            store.Save(world, DateTime.UtcNow);
+                            WriteProgress(folder, state, startedUtc, gameClockStart, gameSeconds, finalWall,
+                                seconds, totalSteps, steps, pace, rate, square, spawn, world, initial,
+                                savedSnakeId, seed, background, logPath, mp4, replayScript);
+                            AppendSeries(seriesPath, gameSeconds, finalWall, steps, world, initial, savedSnakeId);
+                            WriteStatus(folder, state, finalWall, gameSeconds, seconds, world, cast,
+                                CountOriginal(world, initial), rate);
+                            Console.WriteLine("finished state=" + state + " game=" + Format(gameSeconds) +
+                                " wall=" + Format(finalWall) + " moves=" +
+                                world.ShowMoves.ToString("N0", CultureInfo.InvariantCulture) +
+                                " population=" + world.Snakes.Count);
                         }
 
-                        if (stopping) state = "stopped";
-                        if (state == "time-limit") gameSeconds = seconds;
-                        double finalWall = clock.Elapsed.TotalSeconds;
-                        world.ShowSeconds = gameSeconds;
-                        if (state != "extinct" && state != "complete") world.ShowComplete = true;
-                        log.Record(world, rate, true);
-                        WriteProgress(folder, state, startedUtc, gameClockStart, gameSeconds, finalWall,
-                            seconds, totalSteps, steps, pace, rate, world, initial, seed,
-                            background, logPath, mp4, replayScript);
-                        WriteStatus(folder, state, finalWall, gameSeconds, seconds, world, cast,
-                            CountOriginal(world, initial), rate);
-                        Console.WriteLine("finished state=" + state + " game=" + Format(gameSeconds) +
-                            " wall=" + Format(finalWall) + " moves=" +
-                            world.ShowMoves.ToString("N0", CultureInfo.InvariantCulture) +
-                            " population=" + world.Snakes.Count);
-                    }
-
-                    if (replay && File.Exists(replayExe))
-                    {
-                        Console.WriteLine("rendering replay to " + mp4);
-                        var info = new ProcessStartInfo(replayExe,
-                            "--log " + Quote(logPath) + " --out " + Quote(mp4) +
-                            " --hold " + hold.ToString("0.###", CultureInfo.InvariantCulture) +
-                            " --fps " + fps.ToString(CultureInfo.InvariantCulture))
+                        if (!stopping && replay && File.Exists(replayExe))
                         {
-                            UseShellExecute = false,
-                            CreateNoWindow = true
-                        };
-                        using (Process process = Process.Start(info))
-                        {
-                            process.WaitForExit();
-                            if (process.ExitCode != 0)
+                            Console.WriteLine("rendering replay to " + mp4);
+                            var info = new ProcessStartInfo(replayExe,
+                                "--log " + Quote(logPath) + " --out " + Quote(mp4) +
+                                " --hold " + hold.ToString("0.###", CultureInfo.InvariantCulture) +
+                                " --fps " + fps.ToString("0.###", CultureInfo.InvariantCulture))
                             {
-                                state = "replay-failed";
-                                Console.Error.WriteLine("ShowReplay exited with " + process.ExitCode);
+                                UseShellExecute = false,
+                                CreateNoWindow = true
+                            };
+                            using (Process process = Process.Start(info))
+                            {
+                                process.WaitForExit();
+                                if (process.ExitCode != 0)
+                                {
+                                    state = "replay-failed";
+                                    Console.Error.WriteLine("ShowReplay exited with " + process.ExitCode);
+                                }
                             }
                         }
-                    }
-                    else if (replay)
-                    {
-                        Console.Error.WriteLine("ShowReplay.exe was not found at " + replayExe);
-                        state = "replay-missing";
+                        else if (!stopping && replay)
+                        {
+                            Console.Error.WriteLine("ShowReplay.exe was not found at " + replayExe);
+                            state = "replay-missing";
+                        }
                     }
                 }
             }
@@ -283,15 +482,51 @@ namespace Znake.Headless
                     try
                     {
                         WriteProgress(folder, state, startedUtc, gameClockStart, gameSeconds,
-                            clock.Elapsed.TotalSeconds, seconds, totalSteps, steps, pace, rate, world,
-                            initial, seed, background, logPath, mp4, replayScript);
+                            clock.Elapsed.TotalSeconds, seconds, totalSteps, steps, pace, rate,
+                            square, spawn, world, initial, savedSnakeId, seed, background,
+                            logPath, mp4, replayScript);
                     }
                     catch (IOException) { }
                     catch (UnauthorizedAccessException) { }
                 }
                 return 1;
             }
+            finally
+            {
+                Console.CancelKeyPress -= cancelHandler;
+            }
             return 0;
+        }
+
+        private static bool StopFileExists(string stopFile)
+        {
+            return !String.IsNullOrEmpty(stopFile) && File.Exists(stopFile);
+        }
+
+        private static long? FindResidentId(World world)
+        {
+            if (world == null || world.Snakes == null) return null;
+            Snake resident = world.Snakes.FirstOrDefault(snake => snake.IsResident);
+            return resident == null ? (long?)null : resident.Id;
+        }
+
+        private static bool IsSavedSnakeAlive(World world, long? savedSnakeId)
+        {
+            if (world == null || world.Snakes == null || !savedSnakeId.HasValue) return false;
+            return world.Snakes.Any(snake => snake.Id == savedSnakeId.Value);
+        }
+
+        private static Dictionary<string, string> ReadRunInfo(string path)
+        {
+            if (!File.Exists(path)) return null;
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string line in File.ReadAllLines(path))
+            {
+                int eq = line.IndexOf('=');
+                if (eq <= 0) continue;
+                map[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
+            }
+            return map;
         }
 
         private static Snake LoadSavedSnake(string path)
@@ -367,8 +602,9 @@ namespace Znake.Headless
 
         private static void WriteProgress(string folder, string state, string startedUtc,
             DateTimeOffset gameClockStart, double gameSeconds, double wallSeconds, double seconds,
-            long totalSteps, long steps, double pace, double rate, World world, HashSet<long> initial,
-            uint seed, string background, string logPath, string mp4, string replayScript)
+            long totalSteps, long steps, double pace, double rate, int square, string spawn,
+            World world, HashSet<long> initial, long? savedSnakeId, uint seed, string background,
+            string logPath, string mp4, string replayScript)
         {
             double percent = Math.Min(100, Math.Max(0, gameSeconds / seconds * 100));
             var record = new ProgressRecord
@@ -393,12 +629,42 @@ namespace Znake.Headless
                 Tick = world.Ticks,
                 Seed = seed,
                 Pace = pace,
+                Square = square,
+                Spawn = spawn,
+                SavedSnakeId = savedSnakeId,
+                SavedSnakeAlive = IsSavedSnakeAlive(world, savedSnakeId),
                 Background = Path.GetFileName(background),
                 Log = Path.GetFileName(logPath),
                 Mp4 = Path.GetFileName(mp4),
                 ReplayScript = Path.GetFileName(replayScript)
             };
             WriteJson(Path.Combine(folder, "progress.json"), record);
+        }
+
+        private static void AppendSeries(string seriesPath, double gameSeconds, double wallSeconds,
+            long steps, World world, HashSet<long> initial, long? savedSnakeId)
+        {
+            var entry = new SeriesEntry
+            {
+                Utc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                GameSeconds = gameSeconds,
+                WallSeconds = wallSeconds,
+                Steps = steps,
+                Moves = world.ShowMoves,
+                Population = world.Snakes.Count,
+                OriginalAlive = CountOriginal(world, initial),
+                SavedSnakeAlive = IsSavedSnakeAlive(world, savedSnakeId)
+            };
+            var serializer = new DataContractJsonSerializer(typeof(SeriesEntry));
+            string line;
+            using (var stream = new MemoryStream())
+            {
+                serializer.WriteObject(stream, entry);
+                line = Encoding.UTF8.GetString(stream.ToArray());
+            }
+            using (var file = new FileStream(seriesPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            using (var writer = new StreamWriter(file, new UTF8Encoding(false)))
+                writer.WriteLine(line);
         }
 
         private static void WriteStatus(string folder, string state, double wallSeconds,
@@ -419,7 +685,7 @@ namespace Znake.Headless
         private static void WriteRunInfo(string folder, string background, double seconds,
             long totalSteps, DateTimeOffset gameClockStart, int cast, uint seed, int square,
             int width, int height, double snapshot, double progress, double statusEvery, double pace,
-            string savedSnakePath)
+            string spawn, string savedSnakePath)
         {
             string[] lines =
             {
@@ -431,6 +697,7 @@ namespace Znake.Headless
                 "cast=" + cast.ToString(CultureInfo.InvariantCulture),
                 "seed=" + seed.ToString(CultureInfo.InvariantCulture),
                 "square=" + square.ToString(CultureInfo.InvariantCulture),
+                "spawn=" + spawn,
                 "grid=" + width.ToString(CultureInfo.InvariantCulture) + "x" +
                     height.ToString(CultureInfo.InvariantCulture),
                 "snapshotSeconds=" + snapshot.ToString(CultureInfo.InvariantCulture),
@@ -446,8 +713,8 @@ namespace Znake.Headless
         }
 
         private static void WriteScripts(string folder, string replayExe, string mp4, double seconds,
-            int cast, uint seed, double snapshot, double progress, double statusEvery, double pace,
-            double hold, int fps, string savedSnakePath)
+            int cast, int square, uint seed, double snapshot, double progress, double statusEvery,
+            double pace, string spawn, double hold, double fps, string savedSnakePath)
         {
             string replay =
                 "$ErrorActionPreference = 'Stop'" + Environment.NewLine +
@@ -456,7 +723,7 @@ namespace Znake.Headless
                 "--out (Join-Path $here '" + Path.GetFileName(mp4) + "') " +
                 "--frames (Join-Path $here 'replay-frames') " +
                 "--hold " + hold.ToString("0.###", CultureInfo.InvariantCulture) +
-                " --fps " + fps.ToString(CultureInfo.InvariantCulture) + Environment.NewLine +
+                " --fps " + fps.ToString("0.###", CultureInfo.InvariantCulture) + Environment.NewLine +
                 "Write-Host ('Wrote ' + (Join-Path $here '" + Path.GetFileName(mp4) + "'))" +
                 Environment.NewLine;
             File.WriteAllText(Path.Combine(folder, "replay.ps1"), replay, new UTF8Encoding(false));
@@ -468,7 +735,9 @@ namespace Znake.Headless
                 " --background (Join-Path $here 'background.png') --folder $here" +
                 " --seconds " + seconds.ToString(CultureInfo.InvariantCulture) +
                 " --cast " + cast.ToString(CultureInfo.InvariantCulture) +
+                " --square " + square.ToString(CultureInfo.InvariantCulture) +
                 " --seed " + seed.ToString(CultureInfo.InvariantCulture) +
+                " --spawn " + spawn +
                 " --snapshot " + snapshot.ToString(CultureInfo.InvariantCulture) +
                 " --progress " + progress.ToString(CultureInfo.InvariantCulture) +
                 " --status " + statusEvery.ToString(CultureInfo.InvariantCulture) +

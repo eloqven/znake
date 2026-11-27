@@ -114,7 +114,7 @@ namespace Znake
             Write(record);
         }
 
-        internal void Record(World world, double movesPerSecond, bool force = false)
+        internal void Record(World world, double movesPerSecond, bool force = false, double night = 0)
         {
             if (!world.ShowActive) return;
             if (world.ShowComplete)
@@ -133,6 +133,7 @@ namespace Znake
                 Type = world.ShowComplete ? "complete" : "snapshot",
                 UtcTicks = DateTime.UtcNow.Ticks,
                 VisibleSeconds = world.ShowSeconds,
+                Night = night,
                 Tick = world.Ticks,
                 Moves = world.ShowMoves,
                 Population = world.Snakes.Count,
@@ -152,6 +153,7 @@ namespace Znake
                     Resident = snake.IsResident,
                     Entering = snake.Entering,
                     Heading = snake.Heading,
+                    VisionRadius = snake.EffectiveGene(Gene.VisionRadius, night),
                     Red = Byte(snake.Skin.R),
                     Green = Byte(snake.Skin.G),
                     Blue = Byte(snake.Skin.B),
@@ -237,6 +239,7 @@ namespace Znake
         [DataMember(Name = "type")] public string Type;
         [DataMember(Name = "utcTicks")] public long UtcTicks;
         [DataMember(Name = "visibleSeconds")] public double VisibleSeconds;
+        [DataMember(Name = "night", EmitDefaultValue = false)] public double Night;
         [DataMember(Name = "tick")] public long Tick;
         [DataMember(Name = "moves")] public long Moves;
         [DataMember(Name = "population")] public int Population;
@@ -255,6 +258,7 @@ namespace Znake
         [DataMember(Name = "resident")] public bool Resident;
         [DataMember(Name = "entering")] public bool Entering;
         [DataMember(Name = "heading")] public int Heading;
+        [DataMember(Name = "visionRadius")] public double VisionRadius;
         [DataMember(Name = "red")] public int Red;
         [DataMember(Name = "green")] public int Green;
         [DataMember(Name = "blue")] public int Blue;

@@ -38,6 +38,7 @@ if ($Test) {
     $fileName = 'ZnakeTests.exe'
     $options += '/target:exe', '/main:Znake.Tests.TestRunner'
     $sources += @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'tests') -Filter '*Tests.cs' -File | ForEach-Object FullName)
+    $sources += Join-Path $PSScriptRoot 'tools\HeadlessShow.cs'
     $sources += Join-Path $PSScriptRoot 'tests\TestRunner.cs'
 }
 

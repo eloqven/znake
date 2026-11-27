@@ -111,8 +111,21 @@ namespace Znake
 
         public World Load(DateTime now)
         {
+            return Load(now, true);
+        }
+
+        public World Load(DateTime now, bool allowBackupFallback)
+        {
             Checkpoint latest = JsonFiles.Read<Checkpoint>(path, false);
             latestValid = latest != null && Valid(latest);
+            if (!allowBackupFallback)
+            {
+                if (!latestValid)
+                    throw new InvalidDataException("No complete Znake checkpoint could be read.");
+                latest.World.FadeImprints(Math.Max(0, (now.Ticks - latest.SavedUtcTicks) / (double)TimeSpan.TicksPerSecond));
+                return latest.World;
+            }
+
             Checkpoint loaded = latestValid ? latest : JsonFiles.Read<Checkpoint>(backup, false);
             if (!latestValid && (loaded == null || !Valid(loaded)))
             {
@@ -150,7 +163,8 @@ namespace Znake
                 if (snake == null || !OwnId(world, ids, snake.Id) || !ValidSnake(world, snake))
                     return false;
             }
-            if (world.Snakes.Count(snake => snake.IsResident) != 1) return false;
+            int residents = world.Snakes.Count(snake => snake.IsResident);
+            if (world.ShowActive && world.ShowNoRespawn ? residents > 1 : residents != 1) return false;
 
             var sources = new HashSet<long>();
             foreach (Vine vine in world.Vines)

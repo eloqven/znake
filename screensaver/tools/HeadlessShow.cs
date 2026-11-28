@@ -271,19 +271,18 @@ namespace Znake.Headless
 
             try
             {
-                if (!resume)
-                {
-                    Directory.CreateDirectory(folder);
-                    ShowLog.Clear(folder);
-                    if (File.Exists(seriesPath)) File.Delete(seriesPath);
-                }
-
                 using (StateStore store = StateStore.Open(folder))
                 {
                     if (store == null)
                     {
                         Console.Error.WriteLine("Another process holds the lock for " + folder);
                         return 1;
+                    }
+
+                    if (!resume)
+                    {
+                        ShowLog.Clear(folder);
+                        if (File.Exists(seriesPath)) File.Delete(seriesPath);
                     }
 
                     using (var source = new Bitmap(background))
@@ -335,7 +334,7 @@ namespace Znake.Headless
                             WriteRunInfo(folder, background, seconds, totalSteps, gameClockStart, world.Snakes.Count,
                                 seed, square, grid.Width, grid.Height, snapshot, progress, statusEvery, pace,
                                 spawn, savedSnakePath);
-                            WriteScripts(folder, replayExe, mp4, seconds, cast, square, seed, snapshot, progress,
+                            WriteScripts(folder, replayExe, mp4, background, seconds, cast, square, seed, snapshot, progress,
                                 statusEvery, pace, spawn, hold, fps, savedSnakePath);
                         }
 
@@ -712,7 +711,7 @@ namespace Znake.Headless
             File.WriteAllLines(Path.Combine(folder, "run-info.txt"), lines, new UTF8Encoding(false));
         }
 
-        private static void WriteScripts(string folder, string replayExe, string mp4, double seconds,
+        private static void WriteScripts(string folder, string replayExe, string mp4, string background, double seconds,
             int cast, int square, uint seed, double snapshot, double progress, double statusEvery,
             double pace, string spawn, double hold, double fps, string savedSnakePath)
         {
@@ -732,7 +731,7 @@ namespace Znake.Headless
                 "$ErrorActionPreference = 'Stop'" + Environment.NewLine +
                 "$here = Split-Path -Parent $MyInvocation.MyCommand.Path" + Environment.NewLine +
                 "& " + QuoteSingle(Path.GetFullPath(typeof(Program).Assembly.Location)) +
-                " --background (Join-Path $here 'background.png') --folder $here" +
+                " --background " + QuoteSingle(Path.GetFullPath(background)) + " --folder $here" +
                 " --seconds " + seconds.ToString(CultureInfo.InvariantCulture) +
                 " --cast " + cast.ToString(CultureInfo.InvariantCulture) +
                 " --square " + square.ToString(CultureInfo.InvariantCulture) +

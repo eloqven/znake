@@ -149,12 +149,17 @@ namespace Znake.Tests
                     log.Record(world, 1.0, true, 0);
                 }
 
-                string mp41x = Path.Combine(folder, "out-1x.mp4");
+                string framesRoot = Path.Combine(folder, "frames");
+                Directory.CreateDirectory(framesRoot);
+                string existingFile = Path.Combine(framesRoot, "keep.txt");
+                File.WriteAllText(existingFile, "keep");
+                string mp41x = Path.Combine(framesRoot, "out-1x.mp4");
                 string mp413x = Path.Combine(folder, "out-13x.mp4");
                 int code1 = Znake.Replay.Program.Run(new[]
                 {
                     "--log", Path.Combine(folder, "show.log.jsonl"),
                     "--out", mp41x,
+                    "--frames", framesRoot,
                     "--hold", "2.6",
                     "--fps", "12.5",
                     "--speed", "1",
@@ -173,6 +178,9 @@ namespace Znake.Tests
                 });
                 TestRunner.Check(code1 == 0 && File.Exists(mp41x) && new FileInfo(mp41x).Length > 0,
                     "12.5 fps CPU render produces non-empty mp4");
+                TestRunner.Check(File.Exists(existingFile) && File.ReadAllText(existingFile) == "keep" &&
+                    Directory.GetDirectories(framesRoot).Length == 0,
+                    "Successful replay cleans up its frames without modifying other files");
                 TestRunner.Check(code2 == 0 && File.Exists(mp413x) && new FileInfo(mp413x).Length > 0,
                     "30 fps 13x speed CPU render produces non-empty mp4");
             }

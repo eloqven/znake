@@ -95,7 +95,7 @@ namespace Znake.Tests
         private static void StopFileEndsRunCleanlyAndResumeContinues()
         {
             string root = Path.Combine(Path.GetTempPath(), "Znake-stop-resume-" + Guid.NewGuid().ToString("N"));
-            string bg = Path.Combine(root, "bg.png");
+            string bg = Path.Combine(root, "show's background.png");
             string folder = Path.Combine(root, "run");
             string stopFile = Path.Combine(root, "stop.flag");
             try
@@ -167,6 +167,25 @@ namespace Znake.Tests
                 string runScript = File.ReadAllText(Path.Combine(folder, "run.ps1"));
                 TestRunner.Check(runScript.Contains("--square 16") && runScript.Contains("--spawn random"),
                     "Generated run.ps1 preserves square and spawn arguments");
+                TestRunner.Check(runScript.Contains("--background '" + bg.Replace("'", "''") + "'"),
+                    "Generated run.ps1 quotes the actual selected background");
+
+                using (StateStore owner = StateStore.Open(folder))
+                {
+                    TestRunner.Check(owner != null, "Test holds the run folder lock");
+                    int overlapExit = Znake.Headless.Program.Run(new[]
+                    {
+                        "--background", bg, "--folder", folder, "--square", "16",
+                        "--cast", "4", "--seconds", "1", "--no-replay"
+                    });
+                    TestRunner.Check(overlapExit != 0, "A second runner cannot claim the locked folder");
+                }
+                string logPath = Path.Combine(folder, "show.log.jsonl");
+                string seriesPath = Path.Combine(folder, "series.jsonl");
+                TestRunner.Check(File.Exists(logPath) && File.ReadAllLines(logPath).SequenceEqual(logAfter) &&
+                    File.Exists(seriesPath) && File.ReadAllLines(seriesPath).SequenceEqual(seriesAfter) &&
+                    File.Exists(Path.Combine(folder, "show.first-frame.png")),
+                    "A competing launch preserves the locked run's logs and first frame");
             }
             finally
             {

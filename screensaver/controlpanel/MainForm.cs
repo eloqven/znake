@@ -198,6 +198,7 @@ namespace Znake.ControlPanel
             if (keyData == Keys.F7)
             {
                 ShowStep(2);
+                renderStep.Render();
                 return true;
             }
             if (keyData == Keys.F8)

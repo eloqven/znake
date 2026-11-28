@@ -139,9 +139,7 @@ namespace Znake.Replay
             if (speed <= 0) speed = 1.0;
 
             string folder = Path.GetDirectoryName(Path.GetFullPath(log));
-            if (frames == null) frames = Path.Combine(folder, "replay-frames");
             if (output == null) output = Path.Combine(folder, "show-replay.mp4");
-            Directory.CreateDirectory(frames);
 
             List<Record> records = ReadLog(log);
             Record start = records.FirstOrDefault(record => record.Type == "start");
@@ -166,6 +164,10 @@ namespace Znake.Replay
                 : (start.Background == null ? null : Path.Combine(folder, start.Background));
             using (Bitmap background = LoadBackground(backgroundPath, start))
             {
+                string frameRoot = frames == null ? folder : Path.GetFullPath(frames);
+                frames = Path.Combine(frameRoot, "replay-frames-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(frames);
+
                 Console.WriteLine("show " + start.Show + " seed " + start.Seed + " cast " + start.Cast +
                     " target " + start.Target + " scenes " + scenes.Count +
                     " fps " + fps.ToString("0.###", CultureInfo.InvariantCulture) +
@@ -216,7 +218,9 @@ namespace Znake.Replay
                 if (encodeExit != 0) return encodeExit;
 
                 Console.WriteLine("wrote " + output);
-                if (!keepFrames)
+                if (keepFrames)
+                    Console.WriteLine("Frames kept in " + frames);
+                else
                 {
                     try { Directory.Delete(frames, true); }
                     catch (IOException) { }

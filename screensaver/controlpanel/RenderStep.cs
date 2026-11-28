@@ -159,6 +159,11 @@ namespace Znake.ControlPanel
             }
         }
 
+        public void Render()
+        {
+            btnRender.PerformClick();
+        }
+
         public void Play()
         {
             PlayMp4();
